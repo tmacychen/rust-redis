@@ -17,11 +17,13 @@ fn main() {
             Ok(mut stream) => {
                 let mut buf = String::new();
                 while let Ok(read_count) = stream.read_to_string(&mut buf) {
-                    println!("{read_count} : {buf}");
-                    if buf.contains("PING") {
-                        stream.write_all(b"+PONG\r\n").unwrap();
+                    if read_count == 0 {
                         break;
                     }
+                }
+                if buf.contains("PING") {
+                    println!("{buf}");
+                    stream.write_all(b"+PONG\r\n").unwrap();
                 }
             }
             Err(e) => {
