@@ -19,7 +19,6 @@ fn main() {
                 let mut line = String::new();
 
                 while let Ok(read_count) = reader.read_line(&mut line) {
-                    println!("{read_count} and buffer :{line}");
                     if read_count == 0 {
                         break;
                     }
