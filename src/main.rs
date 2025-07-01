@@ -15,15 +15,14 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                let mut buf = String::new();
-                while let Ok(read_count) = stream.read_to_string(&mut buf) {
+                let mut buf = [0; 512];
+                loop {
+                    let read_count = stream.read(&mut buf).unwrap();
                     if read_count == 0 {
                         break;
                     }
-                }
-                if buf.contains("PING") {
-                    println!("{buf}");
-                    stream.write_all(b"+PONG\r\n").unwrap();
+
+                    stream.write(b"+PONG\r\n").unwrap();
                 }
             }
             Err(e) => {
