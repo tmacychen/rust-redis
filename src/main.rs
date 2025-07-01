@@ -22,16 +22,20 @@ fn main() {
                     if read_count == 0 {
                         break;
                     }
+                    println!("{read_count}:{line}");
                     if line.starts_with("*1") {
                         line.clear();
                         // read $4\r\n
                         reader.read_line(&mut line).unwrap();
+                        println!("$4:{line}");
                         line.clear();
                         // read command
                         reader.read_line(&mut line).unwrap();
+                        println!("cmmand : {line}");
                         if line.contains("PING") {
                             reader.get_mut().write_all(b"+PONG\r\n").unwrap();
                         }
+                        line.clear();
                     }
                 }
             }
