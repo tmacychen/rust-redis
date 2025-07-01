@@ -24,15 +24,13 @@ fn main() {
                     }
                     if line.starts_with("*1") {
                         line.clear();
-                        // read $4
+                        // read $4\r\n
                         reader.read_line(&mut line).unwrap();
                         line.clear();
                         // read command
                         reader.read_line(&mut line).unwrap();
-                        if let "PING" = line.trim_end_matches('\n').trim_end_matches('\r') {
-                            reader.get_mut().write(b"+PONG\r\n").unwrap();
-                        } else {
-                            reader.get_mut().write(b"Error:Unknown Command\n").unwrap();
+                        if line.contains("PING") {
+                            reader.get_mut().write_all(b"+PONG\r\n").unwrap();
                         }
                     }
                 }
