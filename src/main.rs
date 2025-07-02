@@ -36,17 +36,40 @@ fn handle_client(mut stream: std::net::TcpStream) {
         if read_count == 0 {
             break;
         }
-        if line.starts_with("*1") {
-            line.clear();
-            // read $4\r\n
-            reader.read_line(&mut line).unwrap();
-            line.clear();
-            // read command
-            reader.read_line(&mut line).unwrap();
-            if line.contains("PING") {
-                reader.get_mut().write_all(b"+PONG\r\n").unwrap();
+        println!("{line}");
+
+        match line.trim() {
+            "*1" => {
+                // read $num. num is len of args\r\n
+                reader.read_line(&mut line).unwrap();
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if line.contains("PING") {
+                    reader.get_mut().write_all(b"+PONG\r\n").unwrap();
+                }
+                line.clear();
             }
-            line.clear();
+            "*2" => {
+                // read $num. num is len of args\r\n
+                reader.read_line(&mut line).unwrap();
+                reader.read_line(&mut line).unwrap();
+
+                if line.contains("ECHO") {
+                    reader.read_line(&mut line).unwrap();
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+
+                    // println!("${}\r\n{}", line.trim().len(), line);
+                    reader
+                        .get_mut()
+                        .write_all(format!("${}\r\n{}", line.trim().len(), line).as_bytes())
+                        .unwrap();
+                }
+                line.clear();
+            }
+            _ => {
+                reader.get_mut().write_all(b"unknown command\r\n").unwrap();
+            }
         }
     }
 }
