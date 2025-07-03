@@ -1,4 +1,4 @@
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -36,6 +36,7 @@ async fn main() -> Result<()> {
 
 async fn handle_client(mut stream: TcpStream) -> Result<()> {
     let mut buf: [u8; 100] = [0; 100];
+    let mut map_set: Vec<(String, String)> = Vec::new();
     loop {
         let n = stream.read(&mut buf).await?;
         if n == 0 {
@@ -83,6 +84,39 @@ async fn handle_client(mut stream: TcpStream) -> Result<()> {
                         size = size - n as i8;
                     }
                 }
+                b'3' => {
+                    std::io::Read::read_to_string(&mut reader, &mut line)
+                        .expect("read command to buf");
+                    let mut set_cmd = line.split_ascii_whitespace().collect::<Vec<&str>>();
+                    set_cmd.pop(); // pop the all 0  at last position in  buf
+                    println!("{:?}", set_cmd);
+                    match set_cmd[0] {
+                        "SET" => {
+                            map_set.push(("aaa".to_string(), "bbb".to_string()));
+                            // map_set
+                            //     .insert(
+                            //         set_cmd.get(2).expect("get SET key").to_string(),
+                            //         set_cmd.get(4).expect("get SET value").to_string(),
+                            //     )
+                            //     .expect("insert k and v into map");
+                            output.extend_from_slice(b"+OK\r\n");
+                        }
+                        "GET" => {
+                            let (_, v) = map_set.pop().take().unwrap();
+                            println!("{v}");
+                            // let v = map_set
+                            //     .pop(set_cmd.get(2).expect("get GET key").to_string().as_str())
+                            //     .expect("get key from map_set")
+                            //     .clone();
+                            output
+                                .extend_from_slice(format!("${}\r\n{}\r\n", v.len(), v).as_bytes());
+                        }
+                        _ => {
+                            println!("unknown command beside of  set and get ")
+                        }
+                    }
+                }
+
                 _ => {}
             }
         }
