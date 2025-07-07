@@ -8,6 +8,8 @@ use tokio::{
 use anyhow::{anyhow, bail, Result};
 use std::sync::Arc;
 
+use crate::commands::{EchoCommand, PingCommand};
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -76,7 +78,7 @@ async fn handle_client(
     println!(" handle client !{:?}", map_set);
     Ok(())
 }
-
+mod commands;
 async fn cmd_handler(
     reader: &mut std::io::Cursor<[u8; 100]>,
     cmd: Vec<u8>,
@@ -86,9 +88,10 @@ async fn cmd_handler(
     let mut output = Vec::new();
 
     // delete the \r\n
-    match String::from_utf8(cmd).unwrap().trim() {
+    match String::from_utf8(cmd).unwrap().to_uppercase().trim() {
         "PING" => {
-            output.extend_from_slice(b"+PONG\r\n");
+            output.extend_from_slice(PingCommand::execute().as_slice());
+            // output.extend_from_slice(b"+PONG\r\n");
         }
         "ECHO" => {
             // TODO: fix
@@ -96,9 +99,15 @@ async fn cmd_handler(
             while arg_len > 0 {
                 let line = read_a_line(reader);
                 // println!("line :{line} arg len is {arg_len}");
+                let mut echo_cmd = EchoCommand::new();
 
-                output.extend_from_slice(format!("${}\r\n", line.len() - 2).as_bytes());
-                output.extend_from_slice(line.as_ref());
+                echo_cmd
+                    .echo_back
+                    .extend_from_slice(format!("${}\r\n", line.len() - 2).as_bytes());
+                echo_cmd.echo_back.extend_from_slice(line.as_ref());
+
+                // echo_cmd.execute();
+                output = echo_cmd.echo_back;
 
                 arg_len -= 1;
             }
@@ -142,7 +151,7 @@ fn read_a_line(reader: &mut std::io::Cursor<[u8; 100]>) -> Vec<u8> {
     // +2 for \r\n
     let mut line = vec![0u8; size + 2];
     std::io::Read::read_exact(reader, &mut line).expect("read a line !");
-    println!("line is {:?} len is {} ", line, line.len());
+    // println!("line is {:?} len is {} ", line, line.len());
     // String::from_utf8(line).expect("read a line from vec to string")
     line
 }
