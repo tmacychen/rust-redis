@@ -1,14 +1,19 @@
-use dashmap::DashMap;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     time::{sleep, Duration},
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
+use std::hash::Hash;
 use std::sync::Arc;
+use tklog::{debug, error, info, Format, LEVEL, LOG};
 
-use crate::commands::{EchoCommand, PingCommand};
+use crate::{
+    commands::{EchoCommand, PingCommand},
+    db::DataBase,
+};
+mod db;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -17,37 +22,44 @@ async fn main() -> Result<()> {
 
     // Uncomment this block to pass the first stage
     //
+    LOG.set_console(true)
+        .set_level(LEVEL::Debug)
+        .set_format(Format::LevelFlag | Format::Time | Format::ShortFileName)
+        .set_formatter("{level}{time}:{message}\n");
+
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
-    //
-    let map_set = Arc::new(DashMap::new());
+
+    // create a db in memory
+    let db = Arc::new(db::DataBase::<String, String>::new());
 
     loop {
         let stream = listener.accept().await;
         match stream {
             Ok((stream, _)) => {
-                let map_clone = Arc::clone(&map_set);
+                let map_clone = Arc::clone(&db);
                 tokio::spawn(async move {
                     if let Err(e) = handle_client(stream, map_clone).await {
-                        eprintln!("{e}");
+                        error!("handle client error :{}", e);
                     }
                 });
             }
             Err(e) => {
-                println!("error: {}", e);
+                error!("error: {}", e);
             }
         }
     }
 }
 
-async fn handle_client(
-    mut stream: TcpStream,
-    mut map_set: Arc<DashMap<String, String>>,
-) -> Result<()> {
+async fn handle_client<K, V>(mut stream: TcpStream, mut db: Arc<DataBase<K, V>>) -> Result<()>
+where
+    K: Eq + Hash + Clone,
+    V: Clone,
+{
     let mut buf: [u8; 100] = [0; 100];
     loop {
         let n = stream.read(&mut buf).await?;
         if n == 0 {
-            println!("read size is 0,break loop !");
+            error!("read size is 0,break loop !");
             break;
         }
 
@@ -55,7 +67,7 @@ async fn handle_client(
 
         let mut control_cmd = [0; 4];
         std::io::Read::read_exact(&mut reader, &mut control_cmd)?;
-        println!("cmd code is {}", String::from_utf8_lossy(&control_cmd));
+        debug!("cmd code is {}", String::from_utf8_lossy(&control_cmd));
         let arg_len: u8 = if control_cmd[1].is_ascii_alphanumeric() {
             control_cmd[1] - '0' as u8
         } else {
@@ -64,26 +76,27 @@ async fn handle_client(
 
         let cmd = read_a_line(&mut reader);
 
-        let output = cmd_handler(&mut reader, cmd, arg_len - 1, &mut map_set)
+        let output = cmd_handler(&mut reader, cmd, arg_len - 1, &mut db)
             .await
             .expect("cmd handler err!");
 
         // println!("output :{}", String::from_utf8(output.clone()).unwrap());
         stream.writable().await?;
         if let Err(e) = stream.write_all(&output).await {
-            eprintln!("Write client failed {:?}", e);
+            error!("Write client failed {:?}", e);
         }
     }
 
-    println!(" handle client !{:?}", map_set);
+    // println!(" handle client !");
     Ok(())
 }
+
 mod commands;
 async fn cmd_handler(
     reader: &mut std::io::Cursor<[u8; 100]>,
     cmd: Vec<u8>,
     mut arg_len: u8,
-    map_set: &mut Arc<DashMap<String, String>>,
+    db: &mut Arc<DataBase<String, String>>,
 ) -> Result<Vec<u8>> {
     let mut output = Vec::new();
 
@@ -116,30 +129,38 @@ async fn cmd_handler(
             // String::from_utf8(line).expect("read a line from vec to string")
             let k = String::from_utf8(read_a_line(reader)).expect("get k");
             let v = String::from_utf8(read_a_line(reader)).expect("get v");
-            map_set.insert(k, v);
+            if arg_len - 2 > 0 {}
+
+            let t = std::time::Instant::now();
+            db.kv_insert(k.clone(), v);
+            db.set_expiry_time(k, t);
             output.extend_from_slice(b"+OK\r\n");
-            println!(" cmd handler {:?}", map_set);
+            // debug!("cmd handler {:?}", db);
         }
         "GET" => {
             let k = String::from_utf8(read_a_line(reader)).expect("get k");
             loop {
-                let v = map_set.try_get(&k);
-                if !v.is_locked() {
-                    if let Some(l) = v.try_unwrap() {
-                        //l have \r\n
-                        output.extend_from_slice(
-                            format!("${}\r\n{}", l.len() - 2, l.to_string()).as_bytes(),
-                        );
-                        print!("get v :{}", l.to_string());
-                    } else {
-                        eprintln!("get v :none");
-                        output.extend_from_slice(b"$-1\r\n");
+                //TODO
+                let exp_t = db.get_expiry_time(&k);
+                match exp_t {
+                    Some(exp_t) => {
+                        todo!()
                     }
-                    break;
-                } else {
-                    sleep(Duration::from_millis(100)).await;
-                    continue;
+                    None => {
+                        if let Some(l) = db.kv_get(&k) {
+                            //l have \r\n
+                            output.extend_from_slice(
+                                format!("${}\r\n{}", l.len() - 2, l.to_string()).as_bytes(),
+                            );
+                            print!("get v :{}", l.to_string());
+                        } else {
+                            eprintln!("get v :none");
+                            output.extend_from_slice(b"$-1\r\n");
+                        }
+                    }
                 }
+
+                break;
             }
         }
         _ => {}
