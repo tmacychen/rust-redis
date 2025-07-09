@@ -5,12 +5,12 @@ use tokio::{
 };
 
 use anyhow::{bail, Result};
-use std::hash::Hash;
 use std::sync::Arc;
+use std::{hash::Hash, time};
 use tklog::{debug, error, info, Format, LEVEL, LOG};
 
 use crate::{
-    commands::{EchoCommand, PingCommand},
+    commands::{EchoCommand, PingCommand, SetCommand},
     db::DataBase,
 };
 mod db;
@@ -50,11 +50,7 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn handle_client<K, V>(mut stream: TcpStream, mut db: Arc<DataBase<K, V>>) -> Result<()>
-where
-    K: Eq + Hash + Clone,
-    V: Clone,
-{
+async fn handle_client(mut stream: TcpStream, mut db: Arc<DataBase<String, String>>) -> Result<()> {
     let mut buf: [u8; 100] = [0; 100];
     loop {
         let n = stream.read(&mut buf).await?;
@@ -129,13 +125,24 @@ async fn cmd_handler(
             // String::from_utf8(line).expect("read a line from vec to string")
             let k = String::from_utf8(read_a_line(reader)).expect("get k");
             let v = String::from_utf8(read_a_line(reader)).expect("get v");
-            if arg_len - 2 > 0 {}
 
-            let t = std::time::Instant::now();
-            db.kv_insert(k.clone(), v);
-            db.set_expiry_time(k, t);
+            let exp_str: String = if arg_len - 2 > 0 {
+                let exp_cmd = String::from_utf8(read_a_line(reader)).expect("get expire time cmd");
+                if exp_cmd.to_lowercase() == "px" {
+                    String::from_utf8(read_a_line(reader)).expect("get expire time") + " ms"
+                } else if exp_cmd.to_lowercase() == "ex" {
+                    String::from_utf8(read_a_line(reader)).expect("get expire time") + " s"
+                } else {
+                    "".to_string()
+                }
+            } else {
+                "".to_string()
+            };
+            if !exp_str.is_empty() {
+                db.set_expiry_time(k.clone(), (exp_str, time::Instant::now()));
+            }
+            db.kv_insert(k, v);
             output.extend_from_slice(b"+OK\r\n");
-            // debug!("cmd handler {:?}", db);
         }
         "GET" => {
             let k = String::from_utf8(read_a_line(reader)).expect("get k");
