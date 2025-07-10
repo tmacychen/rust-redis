@@ -1,3 +1,4 @@
+use log::debug;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -6,40 +7,63 @@ use tokio::{
 use anyhow::{bail, Result};
 use std::sync::Arc;
 use std::time;
-use tklog::{debug, error, info, Format, LEVEL, LOG};
+use tklog::{error, info, Format, LEVEL, LOG};
 
 use crate::{
     commands::{EchoCommand, PingCommand},
     db::DataBase,
 };
 mod db;
+use clap::Parser;
+#[derive(Parser, Debug)]
+#[command(version)]
+struct Args {
+    /// db saved dir
+    #[arg(long, default_value = "")]
+    dir: String,
+    // db saved file name
+    #[arg(long, default_value = "")]
+    dbfilename: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    info!("Logs from your program will appear here!");
-
-    // Uncomment this block to pass the first stage
-    //
     LOG.set_console(true)
         // .set_level(LEVEL::Debug)
-        .set_level(LEVEL::Info)
+        .set_level(LEVEL::Debug)
         .set_format(Format::LevelFlag | Format::ShortFileName)
         .set_formatter("{level}{file}:{message}\n")
         .uselog();
+    // You can use print statements as follows for debugging, they'll be visible when running tests.
+    info!("Logs from your program will appear here!");
+
+    let args = Args::parse();
+
+    let dir = args.dir;
+    let dir_file_name = args.dbfilename;
+
+    log::debug!("dir:{},dir_file_name :{}", dir, dir_file_name);
 
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
 
     // create a db in memory
     let db = Arc::new(db::DataBase::<String, String>::new());
 
+    //save arguments to db
+    if !dir.is_empty() {
+        db.kv_insert("dir".to_lowercase(), dir);
+    }
+    if !dir_file_name.is_empty() {
+        db.kv_insert("dirfilename".to_lowercase(), dir_file_name);
+    }
+
     loop {
         let stream = listener.accept().await;
         match stream {
             Ok((stream, _)) => {
-                let map_clone = Arc::clone(&db);
+                let db_clone = Arc::clone(&db);
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, map_clone).await {
+                    if let Err(e) = handle_client(stream, db_clone).await {
                         error!("handle client error :{}", e);
                     }
                 });
@@ -64,7 +88,7 @@ async fn handle_client(mut stream: TcpStream, mut db: Arc<DataBase<String, Strin
 
         let mut control_cmd = [0; 4];
         std::io::Read::read_exact(&mut reader, &mut control_cmd)?;
-        debug!("cmd code is", String::from_utf8_lossy(&control_cmd));
+        log::debug!("cmd code is{}", String::from_utf8_lossy(&control_cmd));
         let arg_len: u8 = if control_cmd[1].is_ascii_alphanumeric() {
             control_cmd[1] - '0' as u8
         } else {
@@ -126,10 +150,10 @@ async fn cmd_handler(
             let k = String::from_utf8(read_a_line(reader)).expect("get k");
             let v = String::from_utf8(read_a_line(reader)).expect("get v");
 
-            debug!("arg_len is ", arg_len);
+            log::debug!("arg_len is {}", arg_len);
             let exp_str: String = if arg_len - 2 > 0 {
                 let exp_cmd = String::from_utf8(read_a_line(reader)).expect("get expire time cmd");
-                debug!("exp_cmd:", exp_cmd.trim());
+                log::debug!("exp_cmd:{}", exp_cmd.trim());
                 if exp_cmd.trim().to_lowercase() == "px" {
                     String::from_utf8_lossy(read_a_line(reader).trim_ascii_end()).to_string()
                         + " ms"
@@ -149,7 +173,7 @@ async fn cmd_handler(
             output.extend_from_slice(b"+OK\r\n");
         }
         "GET" => {
-            let k = String::from_utf8(read_a_line(reader)).expect("get k");
+            let k = String::from_utf8(read_a_line(reader)).expect("get key panic");
             if let Some((exp_str, t)) = db.get_expiry_time(&k) {
                 debug!("get exp_str:{}", &exp_str);
                 log::debug!("get t:{:?}", &t);
@@ -158,7 +182,11 @@ async fn cmd_handler(
                 match exp_t[1] {
                     "ms" => {
                         if let Ok(exp_t_0) = exp_t[0].parse::<u128>() {
-                            debug!("exp_t_0:", exp_t_0, "t.elapsed:", t.elapsed().as_millis());
+                            log::debug!(
+                                "exp_t_0:{},t.elapsed:{}",
+                                exp_t_0,
+                                t.elapsed().as_millis()
+                            );
                             if exp_t_0 < t.elapsed().as_millis() {
                                 db.kv_delete(&k);
                                 db.del_expiry_time(&k);
@@ -186,16 +214,56 @@ async fn cmd_handler(
                 //l have \r\n
                 output
                     .extend_from_slice(format!("${}\r\n{}", l.len() - 2, l.to_string()).as_bytes());
-                debug!("get v :", l.to_string());
+                log::debug!("get v :{}", l.to_string());
             } else {
                 info!("get v :none");
                 output.extend_from_slice(b"$-1\r\n");
             }
         }
+        "CONFIG" => {
+            return config_cmd(reader, arg_len, db);
+        }
         _ => {}
     }
     Ok(output)
 }
+
+fn config_cmd(
+    reader: &mut std::io::Cursor<[u8; 100]>,
+    arg_len: u8,
+    db: &mut Arc<DataBase<String, String>>,
+) -> Result<Vec<u8>> {
+    let config_sub_cmd = String::from_utf8(read_a_line(reader)).expect("get config cmd panic");
+    log::debug!("config:{} arg_len is {}", &config_sub_cmd, arg_len);
+    match config_sub_cmd.trim().to_uppercase().as_str() {
+        "GET" => {
+            if arg_len - 1 > 0 {
+                let get_arg =
+                    String::from_utf8(read_a_line(reader)).expect("get config cmd arg panic");
+                log::debug!("config get :{}", &get_arg);
+                if let Some(get_arg_value) = db.kv_get(&get_arg) {
+                    let mut output: Vec<u8> = Vec::new();
+                    output.extend_from_slice(get_arg_value.as_bytes());
+                    log::debug!("config get :{}", &get_arg_value);
+                    return Ok(output);
+                } else {
+                    bail!("no get{} from db", &get_arg);
+                }
+            } else {
+                log::debug!("config get miss arg ");
+                bail!("config get miss arg ");
+            }
+        }
+        _ => {
+            bail!("config cmd is error");
+        }
+    }
+
+    // Ok(Vec::new())
+}
+
+// https://lib.rs/crates/resp-protocol can parse the resp
+// https://github.com/iorust/resp.git
 fn read_a_line(reader: &mut std::io::Cursor<[u8; 100]>) -> Vec<u8> {
     let size = get_next_size(reader);
     // +2 for \r\n
