@@ -1,16 +1,15 @@
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    time::{sleep, Duration},
 };
 
 use anyhow::{bail, Result};
 use std::sync::Arc;
-use std::{hash::Hash, time};
+use std::time;
 use tklog::{debug, error, info, Format, LEVEL, LOG};
 
 use crate::{
-    commands::{EchoCommand, PingCommand, SetCommand},
+    commands::{EchoCommand, PingCommand},
     db::DataBase,
 };
 mod db;
@@ -18,14 +17,16 @@ mod db;
 #[tokio::main]
 async fn main() -> Result<()> {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
+    info!("Logs from your program will appear here!");
 
     // Uncomment this block to pass the first stage
     //
     LOG.set_console(true)
-        .set_level(LEVEL::Debug)
-        .set_format(Format::LevelFlag | Format::Time | Format::ShortFileName)
-        .set_formatter("{level}{time}:{message}\n");
+        // .set_level(LEVEL::Debug)
+        .set_level(LEVEL::Info)
+        .set_format(Format::LevelFlag | Format::ShortFileName)
+        .set_formatter("{level}{file}:{message}\n")
+        .uselog();
 
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
 
@@ -55,7 +56,7 @@ async fn handle_client(mut stream: TcpStream, mut db: Arc<DataBase<String, Strin
     loop {
         let n = stream.read(&mut buf).await?;
         if n == 0 {
-            error!("read size is 0,break loop !");
+            info!("read size is 0,break loop !");
             break;
         }
 
@@ -63,7 +64,7 @@ async fn handle_client(mut stream: TcpStream, mut db: Arc<DataBase<String, Strin
 
         let mut control_cmd = [0; 4];
         std::io::Read::read_exact(&mut reader, &mut control_cmd)?;
-        debug!("cmd code is {}", String::from_utf8_lossy(&control_cmd));
+        debug!("cmd code is", String::from_utf8_lossy(&control_cmd));
         let arg_len: u8 = if control_cmd[1].is_ascii_alphanumeric() {
             control_cmd[1] - '0' as u8
         } else {
@@ -103,8 +104,7 @@ async fn cmd_handler(
             // output.extend_from_slice(b"+PONG\r\n");
         }
         "ECHO" => {
-            // TODO: fix
-            // find error if echo args len > 10
+            // TODO: fix find error if echo args len > 10
             while arg_len > 0 {
                 let line = read_a_line(reader);
                 // println!("line :{line} arg len is {arg_len}");
@@ -126,18 +126,22 @@ async fn cmd_handler(
             let k = String::from_utf8(read_a_line(reader)).expect("get k");
             let v = String::from_utf8(read_a_line(reader)).expect("get v");
 
+            debug!("arg_len is ", arg_len);
             let exp_str: String = if arg_len - 2 > 0 {
                 let exp_cmd = String::from_utf8(read_a_line(reader)).expect("get expire time cmd");
-                if exp_cmd.to_lowercase() == "px" {
-                    String::from_utf8(read_a_line(reader)).expect("get expire time") + " ms"
-                } else if exp_cmd.to_lowercase() == "ex" {
-                    String::from_utf8(read_a_line(reader)).expect("get expire time") + " s"
+                debug!("exp_cmd:", exp_cmd.trim());
+                if exp_cmd.trim().to_lowercase() == "px" {
+                    String::from_utf8_lossy(read_a_line(reader).trim_ascii_end()).to_string()
+                        + " ms"
+                } else if exp_cmd.trim().to_lowercase() == "ex" {
+                    String::from_utf8_lossy(read_a_line(reader).trim_ascii_end()).to_string() + " s"
                 } else {
                     "".to_string()
                 }
             } else {
                 "".to_string()
             };
+            log::debug!("k:{} v:{} exp_str:{}", &k, &v, &exp_str);
             if !exp_str.is_empty() {
                 db.set_expiry_time(k.clone(), (exp_str, time::Instant::now()));
             }
@@ -146,28 +150,46 @@ async fn cmd_handler(
         }
         "GET" => {
             let k = String::from_utf8(read_a_line(reader)).expect("get k");
-            loop {
-                //TODO
-                let exp_t = db.get_expiry_time(&k);
-                match exp_t {
-                    Some(exp_t) => {
-                        todo!()
-                    }
-                    None => {
-                        if let Some(l) = db.kv_get(&k) {
-                            //l have \r\n
-                            output.extend_from_slice(
-                                format!("${}\r\n{}", l.len() - 2, l.to_string()).as_bytes(),
-                            );
-                            print!("get v :{}", l.to_string());
+            if let Some((exp_str, t)) = db.get_expiry_time(&k) {
+                debug!("get exp_str:{}", &exp_str);
+                log::debug!("get t:{:?}", &t);
+                //example :"100 ms" or "20 s"
+                let exp_t: Vec<&str> = exp_str.split_whitespace().collect();
+                match exp_t[1] {
+                    "ms" => {
+                        if let Ok(exp_t_0) = exp_t[0].parse::<u128>() {
+                            debug!("exp_t_0:", exp_t_0, "t.elapsed:", t.elapsed().as_millis());
+                            if exp_t_0 < t.elapsed().as_millis() {
+                                db.kv_delete(&k);
+                                db.del_expiry_time(&k);
+                            }
                         } else {
-                            eprintln!("get v :none");
-                            output.extend_from_slice(b"$-1\r\n");
+                            bail!("expire time parse error!:{}", exp_t[1])
                         }
                     }
+                    "s" => {
+                        if let Ok(exp_t_0) = exp_t[0].parse::<u64>() {
+                            if exp_t_0 < t.elapsed().as_secs() {
+                                db.kv_delete(&k);
+                                db.del_expiry_time(&k);
+                            }
+                        } else {
+                            bail!("expire time parse error!:{}", exp_t[1])
+                        }
+                    }
+                    _ => {
+                        bail!("args error: miss time's units ");
+                    }
                 }
-
-                break;
+            }
+            if let Some(l) = db.kv_get(&k) {
+                //l have \r\n
+                output
+                    .extend_from_slice(format!("${}\r\n{}", l.len() - 2, l.to_string()).as_bytes());
+                debug!("get v :", l.to_string());
+            } else {
+                info!("get v :none");
+                output.extend_from_slice(b"$-1\r\n");
             }
         }
         _ => {}

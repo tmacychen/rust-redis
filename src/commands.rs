@@ -5,10 +5,6 @@
 //     GET(GetCommand),
 // }
 
-use std::{sync::Arc, time};
-
-use crate::db::DataBase;
-
 pub trait Exec {
     fn execute(self) -> Vec<u8>;
 }
@@ -30,7 +26,10 @@ impl EchoCommand {
             echo_back: Vec::new(),
         }
     }
-    pub fn execute(self) -> Vec<u8> {
+}
+
+impl Exec for EchoCommand {
+    fn execute(self) -> Vec<u8> {
         self.echo_back
     }
 }
@@ -57,8 +56,8 @@ impl SetCommand {
 }
 pub struct GetCommand {}
 
-impl GetCommand {
-    pub fn execute() -> Vec<u8> {
+impl Exec for GetCommand {
+    fn execute(self) -> Vec<u8> {
         Vec::from(b"+PONG\r\n")
     }
 }

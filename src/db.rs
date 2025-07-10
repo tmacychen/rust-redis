@@ -21,6 +21,9 @@ impl<K: Eq + Hash + Clone, V: Clone> DataBase<K, V> {
     pub fn kv_insert(&self, k: K, v: V) -> Option<V> {
         self.kv_db.insert(k, v)
     }
+    pub fn kv_delete(&self, k: &K) -> Option<(K, V)> {
+        self.kv_db.remove(k)
+    }
     pub fn kv_get(&self, k: &K) -> Option<V> {
         self.kv_db.get(k).map(|v| v.clone())
     }
@@ -30,6 +33,9 @@ impl<K: Eq + Hash + Clone, V: Clone> DataBase<K, V> {
         (exp_str, t): (String, Instant),
     ) -> Option<(String, Instant)> {
         self.expiry_time.insert(k, (exp_str, t))
+    }
+    pub fn del_expiry_time(&self, k: &K) -> Option<(K, (String, Instant))> {
+        self.expiry_time.remove(k)
     }
 
     pub fn get_expiry_time(&self, k: &K) -> Option<(String, Instant)> {
