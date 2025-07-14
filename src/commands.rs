@@ -5,9 +5,10 @@
 //     GET(GetCommand),
 // }
 
-pub trait Exec {
+trait Exec {
     fn execute(self) -> Vec<u8>;
 }
+
 pub struct PingCommand {}
 
 impl PingCommand {

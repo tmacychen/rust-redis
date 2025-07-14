@@ -13,6 +13,7 @@ use crate::{
     commands::{EchoCommand, PingCommand},
     db::DataBase,
 };
+use resp_protocol::{Array, ArrayBuilder, BulkString, RespType};
 mod db;
 use clap::Parser;
 #[derive(Parser, Debug)]
@@ -88,18 +89,24 @@ async fn handle_client(mut stream: TcpStream, mut db: Arc<DataBase<String, Strin
 
         let mut control_cmd = [0; 4];
         std::io::Read::read_exact(&mut reader, &mut control_cmd)?;
-        log::debug!("cmd code is{}", String::from_utf8_lossy(&control_cmd));
         let arg_len: u8 = if control_cmd[1].is_ascii_alphanumeric() {
             control_cmd[1] - '0' as u8
         } else {
             bail!("get arg len error");
         };
 
+        log::debug!("cmd arg len is{}", &arg_len);
         let cmd = read_a_line(&mut reader);
 
         let output = cmd_handler(&mut reader, cmd, arg_len - 1, &mut db)
             .await
             .expect("cmd handler err!");
+
+        log::debug!("output is ready to write back Vec:{:?}", &output);
+        log::debug!(
+            "output is ready to write back:{:?}",
+            String::from_utf8_lossy(&output)
+        );
 
         // println!("output :{}", String::from_utf8(output.clone()).unwrap());
         stream.writable().await?;
@@ -234,18 +241,28 @@ fn config_cmd(
     db: &mut Arc<DataBase<String, String>>,
 ) -> Result<Vec<u8>> {
     let config_sub_cmd = String::from_utf8(read_a_line(reader)).expect("get config cmd panic");
-    log::debug!("config:{} arg_len is {}", &config_sub_cmd, arg_len);
+    log::debug!("config:{} arg_len is {}", config_sub_cmd.trim(), arg_len);
+
     match config_sub_cmd.trim().to_uppercase().as_str() {
         "GET" => {
             if arg_len - 1 > 0 {
-                let get_arg =
-                    String::from_utf8(read_a_line(reader)).expect("get config cmd arg panic");
+                let get_arg = String::from_utf8(read_a_line(reader).trim_ascii().to_vec())
+                    .expect("get config cmd arg panic");
+
                 log::debug!("config get :{}", &get_arg);
                 if let Some(get_arg_value) = db.kv_get(&get_arg) {
-                    let mut output: Vec<u8> = Vec::new();
-                    output.extend_from_slice(get_arg_value.as_bytes());
-                    log::debug!("config get :{}", &get_arg_value);
-                    return Ok(output);
+                    let mut output_array: ArrayBuilder = ArrayBuilder::new();
+                    output_array.insert(RespType::BulkString(BulkString::new(get_arg.as_bytes())));
+                    output_array.insert(RespType::BulkString(BulkString::new(
+                        get_arg_value.as_bytes(),
+                    )));
+
+                    let output: Array = output_array.build();
+                    log::debug!("config get :{:?}", output);
+                    // log::debug!("config get :{:?}", output.bytes().to_vec());
+                    // bytes to vec can save \r\n
+                    // arrary to vec whill time the last \r\n
+                    return Ok(output.bytes().to_vec());
                 } else {
                     bail!("no get{} from db", &get_arg);
                 }
@@ -258,8 +275,6 @@ fn config_cmd(
             bail!("config cmd is error");
         }
     }
-
-    // Ok(Vec::new())
 }
 
 // https://lib.rs/crates/resp-protocol can parse the resp
@@ -269,7 +284,7 @@ fn read_a_line(reader: &mut std::io::Cursor<[u8; 100]>) -> Vec<u8> {
     // +2 for \r\n
     let mut line = vec![0u8; size + 2];
     std::io::Read::read_exact(reader, &mut line).expect("read a line !");
-    // println!("line is {:?} len is {} ", line, line.len());
+    // log::debug!("line is {:?} len is {} ", line, line.len());
     // String::from_utf8(line).expect("read a line from vec to string")
     line
 }
@@ -278,7 +293,11 @@ fn get_next_size(reader: &mut std::io::Cursor<[u8; 100]>) -> usize {
     let mut cmd_size = [0; 4];
     std::io::Read::read_exact(reader, &mut cmd_size).expect("read cmd size !");
     let size = String::from_utf8_lossy(&cmd_size);
-    size.get(1..2)
+    // log::debug!("cmd_size:{:?}", &cmd_size);
+    // log::debug!("cmd_size:{}", size.to_string());
+    //trim and cut off '*'
+    size.trim()
+        .get(1..)
         .unwrap()
         .parse()
         .expect("get size from str to u8")
