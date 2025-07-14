@@ -5,15 +5,15 @@ use tokio::{
 };
 
 use anyhow::{bail, Result};
-use std::sync::Arc;
 use std::time;
+use std::{io::Read, sync::Arc};
 use tklog::{error, info, Format, LEVEL, LOG};
 
 use crate::{
     commands::{EchoCommand, PingCommand},
     db::DataBase,
 };
-use resp_protocol::{Array, ArrayBuilder, BulkString, RespType};
+use resp_protocol::{Array, ArrayBuilder, BulkString, RespType, SimpleString};
 mod db;
 use clap::Parser;
 #[derive(Parser, Debug)]
@@ -114,12 +114,11 @@ async fn handle_client(mut stream: TcpStream, mut db: Arc<DataBase<String, Strin
             error!("Write client failed {:?}", e);
         }
     }
-
-    // println!(" handle client !");
     Ok(())
 }
 
 mod commands;
+
 async fn cmd_handler(
     reader: &mut std::io::Cursor<[u8; 100]>,
     cmd: Vec<u8>,
@@ -230,11 +229,23 @@ async fn cmd_handler(
         "CONFIG" => {
             return config_cmd(reader, arg_len, db);
         }
+        "KEY" => {
+            return key_cmd(reader, arg_len, db);
+        }
         _ => {}
     }
     Ok(output)
 }
 
+fn key_cmd(
+    reader: &mut std::io::Cursor<[u8; 100]>,
+    arg_len: u8,
+    db: &mut Arc<DataBase<String, String>>,
+) -> Result<Vec<u8>> {
+    let key_arg = String::from_utf8(read_a_line(reader)).expect("read from key args");
+    log::debug!("key_arg is {}", key_arg);
+    todo!()
+}
 fn config_cmd(
     reader: &mut std::io::Cursor<[u8; 100]>,
     arg_len: u8,
