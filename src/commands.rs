@@ -1,64 +1,37 @@
-// pub enum Command {
-//     PING(PingCommand),
-//     ECHO(EchoCommand),
-//     SET(SetComand),
-//     GET(GetCommand),
-// }
+/*
 
-trait Exec {
-    fn execute(self) -> Vec<u8>;
+
+
+
+
+
+
+
+
+
+
+*/
+use crate::db::ValueType;
+use anyhow::{bail, Result};
+
+#[derive(Clone, Debug)]
+pub enum Command {
+    Ping,
+    Echo(String),
+    Get(String),
+    Set(String, ValueType),
+    Unknow,
 }
 
-pub struct PingCommand {}
-
-impl PingCommand {
-    pub fn execute() -> Vec<u8> {
-        Vec::from(b"+PONG\r\n")
+impl Command {
+    pub fn from(s: Vec<&[u8]>) -> Result<Self> {
+        Ok(match s[0] {
+            b"ping" => Command::Ping,
+            _ => Command::Unknow,
+        })
     }
-}
-
-pub struct EchoCommand {
-    pub echo_back: Vec<u8>,
-}
-
-impl EchoCommand {
-    pub fn new() -> EchoCommand {
-        EchoCommand {
-            echo_back: Vec::new(),
-        }
-    }
-}
-
-impl Exec for EchoCommand {
-    fn execute(self) -> Vec<u8> {
-        self.echo_back
-    }
-}
-
-pub struct SetCommand {}
-
-impl SetCommand {
-    // pub fn execute<K, V>(
-    //     k: String,
-    //     v: String,
-    //     exp_str: String,
-    //     db: &mut Arc<DataBase<K, V>>,
-    // ) -> Vec<u8>
-    // where
-    //     K: Eq + Hash + Clone,
-    //     V: Clone,
-    // {
-    //     db.kv_insert(k.clone(), v);
-    //     if !exp_str.is_empty() {
-    //         db.set_expiry_time(k, (exp_str, time::Instant::now()));
-    //     }
-    //     Vec::from(b"+OK\r\n")
-    // }
-}
-pub struct GetCommand {}
-
-impl Exec for GetCommand {
-    fn execute(self) -> Vec<u8> {
-        Vec::from(b"+PONG\r\n")
+    pub async fn exec(&self) -> Result<Vec<u8>> {
+        let output = Vec::new();
+        Ok(output)
     }
 }
