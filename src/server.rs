@@ -9,7 +9,7 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::commands::Command;
+use crate::commands;
 const BUF_SIZE: usize = 100;
 
 #[derive(Clone)]
@@ -36,13 +36,14 @@ impl Server {
 
             log::debug!("read from stream bytes num is  {}", n);
             log::debug!(
-                "read from stream bytes num is  {}",
+                "read from stream  is  {}",
                 String::from_utf8_lossy(&buf[0..n]).to_string()
             );
             let read_array: Array = Array::parse(&buf, &mut 0, &n).expect("bulkString parse error");
             log::debug!("read from stream is {:?}", read_array);
 
             let r = read_array.to_vec();
+            log::debug!("read from stream is {:?}", &r);
             let read_slice: Vec<&[u8]> = r
                 .split(|c| *c == b'\r' || *c == b'\n')
                 .filter(|s| !s.is_empty())
@@ -50,16 +51,6 @@ impl Server {
             // log::debug!("read from stream is {:?}", read_slice);
             log::debug!("read from stream  slice is {:?}", read_slice);
 
-            // std::io::Read::read_exact(&mut reader, &mut control_cmd)?;
-            // let arg_len: u8 = if control_cmd[1].is_ascii_alphanumeric() {
-            //     control_cmd[1] - '0' as u8
-            // } else {
-            //     bail!("get arg len error");
-            // };
-
-            // log::debug!("cmd arg len is{}", &arg_len);
-            // let cmd = read_a_line(&mut reader);
-            //
             let (f, l) = read_slice.split_first().expect("parse command error !");
 
             if f[0] != b'*' {
@@ -72,8 +63,9 @@ impl Server {
 
             log::debug!("arg len:is {}", arg_len);
 
-            let cmd = Command::from(l.into()).expect("get cmd error !");
-            let output = cmd.exec().await.expect("cmd exec error!");
+            let output = commands::from_to_exec(l.to_vec(), arg_len)
+                .await
+                .expect("exec cmd error !");
 
             log::debug!("output is ready to write back Vec:{:?}", &output);
             log::debug!(

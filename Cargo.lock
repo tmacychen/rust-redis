@@ -515,8 +515,6 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "resp-protocol"
 version = "0.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8905ff27d846da74e740d321c56f782ffeaf4f95792702df98aab8b37d3bc29f"
 dependencies = [
  "bytes",
 ]
