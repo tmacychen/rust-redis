@@ -252,26 +252,26 @@ async fn main() -> Result<()> {
 
 // https://lib.rs/crates/resp-protocol can parse the resp
 // https://github.com/iorust/resp.git
-fn read_a_line(reader: &mut std::io::Cursor<[u8; 100]>) -> Vec<u8> {
-    let size = get_next_size(reader);
-    // +2 for \r\n
-    let mut line = vec![0u8; size + 2];
-    std::io::Read::read_exact(reader, &mut line).expect("read a line !");
-    log::debug!("line is {:?} len is {} ", line, line.len());
-    // String::from_utf8(line).expect("read a line from vec to string")
-    line
-}
+// fn read_a_line(reader: &mut std::io::Cursor<[u8; 100]>) -> Vec<u8> {
+//     let size = get_next_size(reader);
+//     // +2 for \r\n
+//     let mut line = vec![0u8; size + 2];
+//     std::io::Read::read_exact(reader, &mut line).expect("read a line !");
+//     log::debug!("line is {:?} len is {} ", line, line.len());
+//     // String::from_utf8(line).expect("read a line from vec to string")
+//     line
+// }
 
-fn get_next_size(reader: &mut std::io::Cursor<[u8; 100]>) -> usize {
-    let mut cmd_size = [0; 4];
-    std::io::Read::read_exact(reader, &mut cmd_size).expect("read cmd size !");
-    let size = String::from_utf8_lossy(&cmd_size);
-    // log::debug!("cmd_size:{:?}", &cmd_size);
-    log::debug!("cmd_size:{}", size.to_string());
-    //trim and cut off '*'
-    size.trim()
-        .get(1..)
-        .unwrap()
-        .parse()
-        .expect("get size from str to u8")
-}
+// fn get_next_size(reader: &mut std::io::Cursor<[u8; 100]>) -> usize {
+//     let mut cmd_size = [0; 4];
+//     std::io::Read::read_exact(reader, &mut cmd_size).expect("read cmd size !");
+//     let size = String::from_utf8_lossy(&cmd_size);
+//     // log::debug!("cmd_size:{:?}", &cmd_size);
+//     log::debug!("cmd_size:{}", size.to_string());
+//     //trim and cut off '*'
+//     size.trim()
+//         .get(1..)
+//         .unwrap()
+//         .parse()
+//         .expect("get size from str to u8")
+// }
