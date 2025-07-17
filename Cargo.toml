@@ -10,7 +10,14 @@ bytes = "1.3.0"                                     # helps manage buffers
 clap = { version = "4.5.41", features = ["derive"] }
 dashmap = "6.1.0"
 log = "0.4.27"
-resp-protocol = {path = "./rust-resp-protocol"}
+resp-protocol = "0.0.10"
 thiserror = "1.0.32"                                # error handling
 tklog = "0.2.9"
 tokio = { version = "1.23.0", features = ["full"] } # async networking
+
+
+[package.metadata.patch]
+crates = ["resp-protocol"]
+
+[patch.crates-io]
+resp-protocol = {path = "./resp-protocol"}
