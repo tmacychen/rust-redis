@@ -1,0 +1,3 @@
+[submodule "rust-resp-protocol"]
+	path = rust-resp-protocol
+	url = https://github.com/WatchDG/rust-resp-protocol.git
