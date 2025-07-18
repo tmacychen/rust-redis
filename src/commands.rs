@@ -1,19 +1,121 @@
 use std::time;
 
-use crate::db::ValueType;
+use crate::{
+    db::{DataBase, ValueType},
+    server::Server,
+};
 use anyhow::{bail, Result};
 use resp_protocol::{BulkString, SimpleString};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
 pub struct Ping;
+
 #[derive(Clone, Debug)]
 pub struct Echo(BulkString);
-#[derive(Clone, Debug)]
-pub struct Get(String);
-#[derive(Clone, Debug)]
-pub struct Set(String, ValueType);
 
-pub async fn from_to_exec(s: Vec<&[u8]>, arg_len: u8) -> Result<Vec<u8>> {
+#[derive(Clone)]
+pub struct Get<'a>(String, &'a Arc<Mutex<DataBase>>);
+
+#[derive(Clone)]
+pub struct Set<'a>(String, ValueType, &'a Arc<Mutex<DataBase>>);
+
+impl Ping {
+    fn exec(&self) -> Result<Vec<u8>> {
+        Ok(SimpleString::new(b"PONG").bytes().to_vec())
+    }
+}
+impl Echo {
+    fn exec(&self) -> Result<Vec<u8>> {
+        Ok(self.0.bytes().to_vec())
+    }
+}
+
+impl Get<'_> {
+    async fn exec(&self) -> Result<Vec<u8>> {
+        let db = self.1.lock().await;
+        if let Some((value, expire)) = db.get(&self.0) {
+            match expire {
+                Some((expire_str, instant_time)) => {
+                    let exp_t: Vec<&str> = expire_str.split_whitespace().collect();
+                    match exp_t[1] {
+                        "ms" => {
+                            if let Ok(exp_t_0) = exp_t[0].parse::<u128>() {
+                                log::debug!(
+                                    "exp_t_0:{},t.elapsed:{}",
+                                    exp_t_0,
+                                    instant_time.elapsed().as_millis()
+                                );
+                                if exp_t_0 < instant_time.elapsed().as_millis() {
+                                    db.delete(&self.0);
+                                    Ok(SimpleString::new(b"-1").bytes().to_vec())
+                                } else {
+                                    Ok(BulkString::new(value.as_bytes()).bytes().to_vec())
+                                }
+                            } else {
+                                bail!("expire time parse error!:{}", exp_t[1])
+                            }
+                        }
+                        "s" => {
+                            if let Ok(exp_t_0) = exp_t[0].parse::<u64>() {
+                                if exp_t_0 < instant_time.elapsed().as_secs() {
+                                    db.delete(&self.0);
+                                    Ok(SimpleString::new(b"-1").bytes().to_vec())
+                                } else {
+                                    Ok(BulkString::new(value.as_bytes()).bytes().to_vec())
+                                }
+                            } else {
+                                bail!("expire time parse error!:{}", exp_t[1])
+                            }
+                        }
+                        _ => {
+                            bail!("args error: miss time's units ");
+                        }
+                    }
+                }
+                None => Ok(BulkString::new(value.as_bytes()).bytes().to_vec()),
+            }
+        } else {
+            Ok(SimpleString::new(b"-1").bytes().to_vec())
+        }
+    }
+}
+impl Set<'_> {
+    async fn exec(&self) -> Result<Vec<u8>> {
+        let db = self.2.lock().await;
+        if db.insert(self.0.clone(), self.1.clone()).is_some() {
+            Ok(SimpleString::new(b"OK").bytes().to_vec())
+        } else {
+            Ok(SimpleString::new(b"-1").bytes().to_vec())
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Config<'a> {
+    cmd: &'a [&'a [u8]],
+}
+
+impl<'a> Config<'a> {
+    pub fn new(cmd: &'a [&[u8]]) -> Self {
+        Config { cmd: cmd }
+    }
+
+    fn exec(&self) -> Result<Vec<u8>> {
+        log::debug!("config cmd is {:?}", &self.cmd);
+        match self.cmd[1].to_ascii_lowercase().as_slice() {
+            b"set" => {
+                todo!()
+            }
+            b"get" => {}
+            _ => bail!("unknown config sub cmd "),
+        }
+        todo!()
+    }
+}
+
+pub async fn from_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Result<Vec<u8>> {
     log::debug!("get s:{:?}", s);
     match s[1].to_ascii_lowercase().as_slice() {
         b"ping" => crate::commands::Ping.exec(),
@@ -52,6 +154,7 @@ pub async fn from_to_exec(s: Vec<&[u8]>, arg_len: u8) -> Result<Vec<u8>> {
             }
             crate::commands::Get(
                 String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
+                Arc::clone(&server.storage),
             )
             .exec()
         }
@@ -62,6 +165,7 @@ pub async fn from_to_exec(s: Vec<&[u8]>, arg_len: u8) -> Result<Vec<u8>> {
                     String::from_utf8(s[5].to_vec()).expect("convert get arg to string"),
                     None,
                 ),
+                Arc::clone(&server.storage),
             )
             .exec(),
             5 => {
@@ -73,16 +177,18 @@ pub async fn from_to_exec(s: Vec<&[u8]>, arg_len: u8) -> Result<Vec<u8>> {
                         String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
                         (
                             String::from_utf8(s[5].to_vec()).expect("convert get arg to string"),
-                            Some((time_str + "ms", time::Instant::now())),
+                            Some((time_str + " ms", time::Instant::now())),
                         ),
+                        Arc::clone(&server.storage),
                     )
                     .exec(),
                     b"ex" => crate::commands::Set(
                         String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
                         (
                             String::from_utf8(s[5].to_vec()).expect("convert get arg to string"),
-                            Some((time_str + "s", time::Instant::now())),
+                            Some((time_str + " s", time::Instant::now())),
                         ),
+                        Arc::clone(&server.storage),
                     )
                     .exec(),
                     _ => bail!("expirty arg is error"),
@@ -90,32 +196,8 @@ pub async fn from_to_exec(s: Vec<&[u8]>, arg_len: u8) -> Result<Vec<u8>> {
             }
             _ => bail!("set arg is error"),
         },
+        b"config" => Config::new(&s[2..]).exec(),
+
         _ => bail!("cmd parse error"),
-    }
-}
-
-trait Exec {
-    fn exec(&self) -> Result<Vec<u8>>;
-}
-
-impl Exec for Ping {
-    fn exec(&self) -> Result<Vec<u8>> {
-        Ok(SimpleString::new(b"PONG").bytes().to_vec())
-    }
-}
-impl Exec for Echo {
-    fn exec(&self) -> Result<Vec<u8>> {
-        Ok(self.0.bytes().to_vec())
-    }
-}
-
-impl Exec for Get {
-    fn exec(&self) -> Result<Vec<u8>> {
-        todo!()
-    }
-}
-impl Exec for Set {
-    fn exec(&self) -> Result<Vec<u8>> {
-        todo!()
     }
 }

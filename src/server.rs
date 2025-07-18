@@ -7,18 +7,25 @@ use tklog::info;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
+    sync::Mutex,
 };
 
 use crate::commands;
 const BUF_SIZE: usize = 100;
 
+// #[derive(Clone)]
+// pub struct ServerOption {
+//     pub dir: String,
+//     pub db_filename: String,
+// }
+
 #[derive(Clone)]
 pub struct Server {
-    pub storage: Arc<DataBase>,
+    pub storage: Arc<Mutex<DataBase>>,
 }
 
 impl Server {
-    pub async fn new(db: Arc<DataBase>) -> Self {
+    pub async fn new(db: Arc<Mutex<DataBase>>) -> Self {
         let mut server = Server { storage: db };
         server.init().await;
         server
@@ -63,7 +70,7 @@ impl Server {
 
             log::debug!("arg len:is {}", arg_len);
 
-            let output = commands::from_to_exec(l.to_vec(), arg_len)
+            let output = commands::from_to_exec(l.to_vec(), arg_len, self)
                 .await
                 .expect("exec cmd error !");
 

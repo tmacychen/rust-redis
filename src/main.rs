@@ -1,7 +1,7 @@
 use tokio::net::TcpListener;
 
-use anyhow::{bail, Result};
-use std::sync::Arc;
+use anyhow::Result;
+use std::{default, sync::Arc};
 use tklog::{error, info, Format, LEVEL, LOG};
 
 use clap::Parser;
@@ -36,15 +36,15 @@ async fn main() -> Result<()> {
     // for args
     let args = Args::parse();
 
-    let dir = args.dir;
-    let dir_file_name = args.dbfilename;
-
-    log::debug!("dir:{},dir_file_name :{}", dir, dir_file_name);
-
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
 
     // create a db in memory
-    let db = Arc::new(db::DataBase::new());
+    let mut db = db::DataBase::new();
+    if !args.dir.is_empty() && !args.dbfilename.is_empty() {
+        db.init_db_file(&args.dir, &args.dbfilename);
+    }
+
+    let db_arc = Arc::new(db);
 
     // //save arguments to db
     // if !dir.is_empty() {
@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
     // if !dir_file_name.is_empty() {
     //     db.kv_insert("dirfilename".to_lowercase(), dir_file_name);
     // }
-    let server = server::Server::new(db).await;
+    let server = server::Server::new(db_arc).await;
 
     loop {
         let stream = listener.accept().await;
