@@ -1,4 +1,5 @@
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 
 use anyhow::Result;
 use std::{default, sync::Arc};
@@ -40,11 +41,12 @@ async fn main() -> Result<()> {
 
     // create a db in memory
     let mut db = db::DataBase::new();
+    let mut db_conf = db::Dbconf::new();
     if !args.dir.is_empty() && !args.dbfilename.is_empty() {
-        db.init_db_file(&args.dir, &args.dbfilename);
+        db_conf.set(args.dir.clone(), args.dbfilename.clone());
     }
 
-    let db_arc = Arc::new(db);
+    let db_arc = Arc::new(Mutex::new(db));
 
     // //save arguments to db
     // if !dir.is_empty() {
@@ -53,7 +55,7 @@ async fn main() -> Result<()> {
     // if !dir_file_name.is_empty() {
     //     db.kv_insert("dirfilename".to_lowercase(), dir_file_name);
     // }
-    let server = server::Server::new(db_arc).await;
+    let server = server::Server::new(db_arc, db_conf).await;
 
     loop {
         let stream = listener.accept().await;

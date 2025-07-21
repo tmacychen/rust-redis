@@ -1,11 +1,11 @@
 use std::time;
 
 use crate::{
-    db::{DataBase, ValueType},
+    db::{DataBase, Dbconf, ValueType},
     server::Server,
 };
 use anyhow::{bail, Result};
-use resp_protocol::{BulkString, SimpleString};
+use resp_protocol::{ArrayBuilder, BulkString, RespType, SimpleString};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -16,10 +16,10 @@ pub struct Ping;
 pub struct Echo(BulkString);
 
 #[derive(Clone)]
-pub struct Get<'a>(String, &'a Arc<Mutex<DataBase>>);
+pub struct Get(String, Arc<Mutex<DataBase>>);
 
 #[derive(Clone)]
-pub struct Set<'a>(String, ValueType, &'a Arc<Mutex<DataBase>>);
+pub struct Set(String, ValueType, Arc<Mutex<DataBase>>);
 
 impl Ping {
     fn exec(&self) -> Result<Vec<u8>> {
@@ -32,7 +32,7 @@ impl Echo {
     }
 }
 
-impl Get<'_> {
+impl Get {
     async fn exec(&self) -> Result<Vec<u8>> {
         let db = self.1.lock().await;
         if let Some((value, expire)) = db.get(&self.0) {
@@ -81,7 +81,7 @@ impl Get<'_> {
         }
     }
 }
-impl Set<'_> {
+impl Set {
     async fn exec(&self) -> Result<Vec<u8>> {
         let db = self.2.lock().await;
         if db.insert(self.0.clone(), self.1.clone()).is_some() {
@@ -95,11 +95,15 @@ impl Set<'_> {
 #[derive(Default)]
 pub struct Config<'a> {
     cmd: &'a [&'a [u8]],
+    db_conf: Dbconf,
 }
 
 impl<'a> Config<'a> {
-    pub fn new(cmd: &'a [&[u8]]) -> Self {
-        Config { cmd: cmd }
+    pub fn new(cmd: &'a [&[u8]], db_conf: &Dbconf) -> Self {
+        Config {
+            cmd: cmd,
+            db_conf: db_conf.clone(),
+        }
     }
 
     fn exec(&self) -> Result<Vec<u8>> {
@@ -108,14 +112,31 @@ impl<'a> Config<'a> {
             b"set" => {
                 todo!()
             }
-            b"get" => {}
+            b"get" => match self.cmd[3].to_ascii_lowercase().as_slice() {
+                b"dir" => {
+                    let mut ret = ArrayBuilder::new();
+                    ret.insert(RespType::BulkString(BulkString::new(b"dir")));
+                    ret.insert(RespType::BulkString(BulkString::new(
+                        self.db_conf.get_dir().as_bytes(),
+                    )));
+                    Ok(ret.build().bytes().to_vec())
+                }
+                b"dbfilename" => {
+                    let mut ret = ArrayBuilder::new();
+                    ret.insert(RespType::BulkString(BulkString::new(b"dbfilename")));
+                    ret.insert(RespType::BulkString(BulkString::new(
+                        self.db_conf.get_db_filename().as_bytes(),
+                    )));
+                    Ok(ret.build().bytes().to_vec())
+                }
+                _ => Ok(SimpleString::new(b"-1").bytes().to_vec()),
+            },
             _ => bail!("unknown config sub cmd "),
         }
-        todo!()
     }
 }
 
-pub async fn from_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Result<Vec<u8>> {
+pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Result<Vec<u8>> {
     log::debug!("get s:{:?}", s);
     match s[1].to_ascii_lowercase().as_slice() {
         b"ping" => crate::commands::Ping.exec(),
@@ -157,46 +178,58 @@ pub async fn from_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Result
                 Arc::clone(&server.storage),
             )
             .exec()
+            .await
         }
         b"set" => match arg_len {
-            3 => crate::commands::Set(
-                String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
-                (
-                    String::from_utf8(s[5].to_vec()).expect("convert get arg to string"),
-                    None,
-                ),
-                Arc::clone(&server.storage),
-            )
-            .exec(),
+            3 => {
+                crate::commands::Set(
+                    String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
+                    (
+                        String::from_utf8(s[5].to_vec()).expect("convert get arg to string"),
+                        None,
+                    ),
+                    Arc::clone(&server.storage),
+                )
+                .exec()
+                .await
+            }
             5 => {
                 let time_str = String::from_utf8(s[9].to_vec()).expect("conver time to str ");
                 log::debug!(" set time is {}", time_str);
 
                 match s[7] {
-                    b"px" => crate::commands::Set(
-                        String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
-                        (
-                            String::from_utf8(s[5].to_vec()).expect("convert get arg to string"),
-                            Some((time_str + " ms", time::Instant::now())),
-                        ),
-                        Arc::clone(&server.storage),
-                    )
-                    .exec(),
-                    b"ex" => crate::commands::Set(
-                        String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
-                        (
-                            String::from_utf8(s[5].to_vec()).expect("convert get arg to string"),
-                            Some((time_str + " s", time::Instant::now())),
-                        ),
-                        Arc::clone(&server.storage),
-                    )
-                    .exec(),
+                    b"px" => {
+                        crate::commands::Set(
+                            String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
+                            (
+                                String::from_utf8(s[5].to_vec())
+                                    .expect("convert get arg to string"),
+                                Some((time_str + " ms", time::Instant::now())),
+                            ),
+                            Arc::clone(&server.storage),
+                        )
+                        .exec()
+                        .await
+                    }
+                    b"ex" => {
+                        crate::commands::Set(
+                            String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
+                            (
+                                String::from_utf8(s[5].to_vec())
+                                    .expect("convert get arg to string"),
+                                Some((time_str + " s", time::Instant::now())),
+                            ),
+                            Arc::clone(&server.storage),
+                        )
+                        .exec()
+                        .await
+                    }
                     _ => bail!("expirty arg is error"),
                 }
             }
             _ => bail!("set arg is error"),
         },
-        b"config" => Config::new(&s[2..]).exec(),
+        b"config" => Config::new(&s[2..], &server.db_conf).exec(),
 
         _ => bail!("cmd parse error"),
     }

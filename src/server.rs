@@ -1,11 +1,10 @@
-use crate::db::DataBase;
+use crate::db::{self, DataBase};
 use anyhow::{bail, Result};
-use bytes::Buf;
-use resp_protocol::{Array, ArrayBuilder, BulkString, RespType, SimpleString};
-use std::{io::BufRead, sync::Arc};
+use resp_protocol::Array;
+use std::sync::Arc;
 use tklog::info;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
     sync::Mutex,
 };
@@ -22,11 +21,15 @@ const BUF_SIZE: usize = 100;
 #[derive(Clone)]
 pub struct Server {
     pub storage: Arc<Mutex<DataBase>>,
+    pub db_conf: db::Dbconf,
 }
 
 impl Server {
-    pub async fn new(db: Arc<Mutex<DataBase>>) -> Self {
-        let mut server = Server { storage: db };
+    pub async fn new(db: Arc<Mutex<DataBase>>, db_conf: db::Dbconf) -> Self {
+        let mut server = Server {
+            storage: db,
+            db_conf: db_conf,
+        };
         server.init().await;
         server
     }
@@ -70,7 +73,7 @@ impl Server {
 
             log::debug!("arg len:is {}", arg_len);
 
-            let output = commands::from_to_exec(l.to_vec(), arg_len, self)
+            let output = commands::from_cmd_to_exec(l.to_vec(), arg_len, self)
                 .await
                 .expect("exec cmd error !");
 
