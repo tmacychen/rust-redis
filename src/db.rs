@@ -97,7 +97,7 @@ pub enum RedisValue {
     // StreamListPacks(Vec<u8>),
 }
 
-// RDB文件结构
+// RDB file structure
 /*
 // ----------------------------#
 52 45 44 49 53              # Magic String "REDIS"
@@ -167,23 +167,26 @@ impl RdbFile {
     }
 
     // 异步设置键值对，如果已存在则更新
-    pub async fn set(&mut self, db: u64, key: String, value: RedisValue, expiry: Option<Expiry>) {
-        let db_entry = self.databases.entry(db).or_insert(Vec::new());
-
-        // 检查键是否已存在，如果存在则更新
-        if let Some(pos) = db_entry.iter().position(|kv| kv.key == key) {
-            db_entry[pos] = KeyValuePair { key, value, expiry };
-        } else {
-            // 不存在则添加新的键值对
-            db_entry.push(KeyValuePair { key, value, expiry });
-        }
+    pub async fn insert(
+        &mut self,
+        db: u64,
+        key: String,
+        value: RedisValue,
+        expiry: Option<(Expiry, Instant)>,
+    ) {
+        self.databases.entry(db).or_insert(DashMap::new()).insert(
+            key,
+            KeyValue {
+                value: value,
+                expiry: expiry,
+            },
+        );
     }
 
     // 异步删除指定的键
     pub async fn delete(&mut self, db: u64, key: &str) -> bool {
         if let Some(db_entry) = self.databases.get_mut(&db) {
-            if let Some(pos) = db_entry.iter().position(|kv| kv.key == key) {
-                db_entry.remove(pos);
+            if let Some((_, _)) = db_entry.remove(key) {
                 return true;
             }
         }
