@@ -1,4 +1,4 @@
-use crate::db::{self, DataBase};
+use crate::db::{self, Dbconf, RdbFile};
 use anyhow::{bail, Result};
 use resp_protocol::Array;
 use std::sync::Arc;
@@ -20,14 +20,14 @@ const BUF_SIZE: usize = 100;
 
 #[derive(Clone)]
 pub struct Server {
-    pub storage: Arc<Mutex<DataBase>>,
-    pub db_conf: db::Dbconf,
+    pub storage: RdbFile,
+    pub db_conf: Dbconf,
 }
 
 impl Server {
-    pub async fn new(db: Arc<Mutex<DataBase>>, db_conf: db::Dbconf) -> Self {
+    pub async fn new(db_conf: db::Dbconf) -> Self {
         let mut server = Server {
-            storage: db,
+            storage: RdbFile::new(db::RDB_VERSION),
             db_conf: db_conf,
         };
         server.init().await;

@@ -36,7 +36,7 @@ impl Dbconf {
 
 // RDB文件中的常量定义
 const MAGIC_STRING: &[u8] = b"REDIS";
-const RDB_VERSION: u32 = 9;
+pub const RDB_VERSION: u32 = 9;
 
 // RDB文件中的特殊字节
 const TYPE_AUX: u8 = 0xFA;
@@ -45,6 +45,9 @@ const TYPE_SELECTDB: u8 = 0xFE;
 const TYPE_EOF: u8 = 0xFF;
 const TYPE_EXPIRETIME: u8 = 0xFD;
 const TYPE_EXPIRETIME_MS: u8 = 0xFC;
+
+// DB number for test
+pub const DB_NUM: u32 = 0;
 
 // RDB文件中的数据类型
 #[derive(Debug, Clone, PartialEq)]
@@ -67,8 +70,8 @@ pub enum RDB_V_Type {
 // 过期时间类型
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expiry {
-    Seconds(u32),
-    Milliseconds(u64),
+    Seconds(u64),
+    Milliseconds(u128),
 }
 
 // 支持过期时间的键值对
@@ -138,7 +141,7 @@ FF                          ## End of RDB file indicator
 pub struct RdbFile {
     pub version: u32,
     pub aux_fields: DashMap<String, String>,
-    pub databases: DashMap<u64, DashMap<String, KeyValue>>,
+    pub databases: DashMap<u32, DashMap<String, KeyValue>>,
 }
 
 impl RdbFile {
@@ -157,19 +160,17 @@ impl RdbFile {
     }
 
     // 异步获取指定数据库中的键值对
-    pub async fn get(&self, db: u64, key: &str) -> KeyValue {
-        self.databases
-            .get(&db)
-            .expect("get db error")
-            .get(key)
-            .expect("get key is error {key}")
-            .clone()
+    pub async fn get(&self, db: u32, key: &str) -> Option<KeyValue> {
+        match self.databases.get(&db).expect("get db error").get(key) {
+            Some(v) => Some(v.value().clone()),
+            None => None,
+        }
     }
 
     // 异步设置键值对，如果已存在则更新
     pub async fn insert(
         &mut self,
-        db: u64,
+        db: u32,
         key: String,
         value: RedisValue,
         expiry: Option<(Expiry, Instant)>,
@@ -184,69 +185,75 @@ impl RdbFile {
     }
 
     // 异步删除指定的键
-    pub async fn delete(&mut self, db: u64, key: &str) -> bool {
+    pub async fn delete(&mut self, db: u32, key: &str) -> bool {
         if let Some(db_entry) = self.databases.get_mut(&db) {
-            if let Some((_, _)) = db_entry.remove(key) {
-                return true;
+            if let Some((k, _)) = db_entry.remove(key) {
+                if k == key {
+                    return true;
+                }
             }
         }
         false
     }
 
     // 异步获取所有键
-    pub async fn keys(&self, db: u64) -> Vec<String> {
+    pub async fn keys(&self, db: u32) -> Vec<String> {
         self.databases
             .get(&db)
-            .map(|kvs| kvs.iter().map(|kv| kv.key.clone()).collect())
-            .unwrap_or_default()
+            .expect("get db error")
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
+    // TODO: rewrite for get size
     // 异步获取数据库大小（键值对数量）
-    pub async fn dbsize(&self, db: u64) -> usize {
+    pub async fn dbsize(&self, db: u32) -> usize {
         self.databases.get(&db).map(|kvs| kvs.len()).unwrap_or(0)
     }
 
+    // TODO: rewrite for get count
     // 获取数据库数量
     pub fn db_count(&self) -> usize {
         self.databases.len()
     }
 }
 
-#[derive(Default)]
-pub struct DataBase {
-    kv_db: DashMap<String, ValueType>,
-    // db_file: (String, String, Option<File>), // (dir,db_file_name,db_file)
-}
+// #[derive(Default)]
+// pub struct DataBase {
+//     kv_db: DashMap<String, ValueType>,
+//     // db_file: (String, String, Option<File>), // (dir,db_file_name,db_file)
+// }
 
-impl DataBase {
-    pub fn new() -> Self {
-        DataBase {
-            kv_db: DashMap::new(),
-            ..Default::default()
-        }
-    }
-    pub fn init_db_file(&mut self, dir: &str, db_file_name: &str) {
-        let mut file_name = PathBuf::new();
-        file_name.push(dir);
-        file_name.push(db_file_name);
-        log::debug!("file name is {}", file_name.as_path().to_str().unwrap());
+// impl DataBase {
+//     pub fn new() -> Self {
+//         DataBase {
+//             kv_db: DashMap::new(),
+//             ..Default::default()
+//         }
+//     }
+//     pub fn init_db_file(&mut self, dir: &str, db_file_name: &str) {
+//         let mut file_name = PathBuf::new();
+//         file_name.push(dir);
+//         file_name.push(db_file_name);
+//         log::debug!("file name is {}", file_name.as_path().to_str().unwrap());
 
-        // self.db_file = (
-        //     dir.to_string(),
-        //     db_file_name.to_string(),
-        //     Some(File::create(file_name).expect("can't create a db file")),
-        // );
-    }
-    pub fn insert(&self, k: String, v: ValueType) -> Option<ValueType> {
-        self.kv_db.insert(k, v)
-    }
-    pub fn delete(&self, k: &str) -> Option<(String, ValueType)> {
-        self.kv_db.remove(k)
-    }
-    pub fn get(&self, k: &str) -> Option<ValueType> {
-        self.kv_db.get(k).map(|v| v.clone())
-    }
-    pub fn keys(&self) -> Vec<String> {
-        self.kv_db.iter().map(|entry| entry.key().clone()).collect()
-    }
-}
+//         // self.db_file = (
+//         //     dir.to_string(),
+//         //     db_file_name.to_string(),
+//         //     Some(File::create(file_name).expect("can't create a db file")),
+//         // );
+//     }
+//     pub fn insert(&self, k: String, v: ValueType) -> Option<ValueType> {
+//         self.kv_db.insert(k, v)
+//     }
+//     pub fn delete(&self, k: &str) -> Option<(String, ValueType)> {
+//         self.kv_db.remove(k)
+//     }
+//     pub fn get(&self, k: &str) -> Option<ValueType> {
+//         self.kv_db.get(k).map(|v| v.clone())
+//     }
+//     pub fn keys(&self) -> Vec<String> {
+//         self.kv_db.iter().map(|entry| entry.key().clone()).collect()
+//     }
+// }

@@ -1,13 +1,11 @@
 use std::time;
 
 use crate::{
-    db::{DataBase, Dbconf, ValueType},
+    db::{self, Dbconf, Expiry, KeyValue, RdbFile, RedisValue, DB_NUM, RDB_VERSION},
     server::Server,
 };
 use anyhow::{bail, Result};
 use resp_protocol::{ArrayBuilder, BulkString, RespType, SimpleString};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
 pub struct Ping;
@@ -15,11 +13,9 @@ pub struct Ping;
 #[derive(Clone, Debug)]
 pub struct Echo(BulkString);
 
-#[derive(Clone)]
-pub struct Get(String, Arc<Mutex<DataBase>>);
+pub struct Get<'a>(String, &'a mut RdbFile);
 
-#[derive(Clone)]
-pub struct Set(String, ValueType, Arc<Mutex<DataBase>>);
+pub struct Set<'a>(String, KeyValue, &'a mut RdbFile);
 
 impl Ping {
     fn exec(&self) -> Result<Vec<u8>> {
@@ -31,64 +27,69 @@ impl Echo {
         Ok(self.0.bytes().to_vec())
     }
 }
+impl Get<'_> {
+    async fn exec<'a>(&'a mut self) -> Result<Vec<u8>> {
+        let db: &mut RdbFile = self.1;
 
-impl Get {
-    async fn exec(&self) -> Result<Vec<u8>> {
-        let db = self.1.lock().await;
-        if let Some((value, expire)) = db.get(&self.0) {
-            match expire {
-                Some((expire_str, instant_time)) => {
-                    let exp_t: Vec<&str> = expire_str.split_whitespace().collect();
-                    match exp_t[1] {
-                        "ms" => {
-                            if let Ok(exp_t_0) = exp_t[0].parse::<u128>() {
-                                log::debug!(
-                                    "exp_t_0:{},t.elapsed:{}",
-                                    exp_t_0,
-                                    instant_time.elapsed().as_millis()
-                                );
-                                if exp_t_0 < instant_time.elapsed().as_millis() {
-                                    db.delete(&self.0);
-                                    Ok(SimpleString::new(b"-1").bytes().to_vec())
-                                } else {
-                                    Ok(BulkString::new(value.as_bytes()).bytes().to_vec())
-                                }
-                            } else {
-                                bail!("expire time parse error!:{}", exp_t[1])
-                            }
-                        }
-                        "s" => {
-                            if let Ok(exp_t_0) = exp_t[0].parse::<u64>() {
-                                if exp_t_0 < instant_time.elapsed().as_secs() {
-                                    db.delete(&self.0);
-                                    Ok(SimpleString::new(b"-1").bytes().to_vec())
-                                } else {
-                                    Ok(BulkString::new(value.as_bytes()).bytes().to_vec())
-                                }
-                            } else {
-                                bail!("expire time parse error!:{}", exp_t[1])
-                            }
-                        }
-                        _ => {
-                            bail!("args error: miss time's units ");
+        if let Some(value) = db.get(DB_NUM, &self.0).await {
+            match value.expiry {
+                Some((exp_t, instant_time)) => match exp_t {
+                    Expiry::Milliseconds(t) => {
+                        log::debug!(
+                            "exp_t:{},t.elapsed:{}",
+                            t,
+                            instant_time.elapsed().as_millis()
+                        );
+                        if t < instant_time.elapsed().as_millis() {
+                            log::debug!("delete a key {}", db.delete(0, &self.0).await);
+                            Ok(SimpleString::new(b"-1").bytes().to_vec())
+                        } else {
+                            get_value_from_redis_type(&value.value)
                         }
                     }
-                }
-                None => Ok(BulkString::new(value.as_bytes()).bytes().to_vec()),
+                    Expiry::Seconds(t) => {
+                        log::debug!(
+                            "exp_t:{},t.elapsed:{}",
+                            t,
+                            instant_time.elapsed().as_millis()
+                        );
+                        if t < instant_time.elapsed().as_secs() {
+                            log::debug!("delete a key {}", db.delete(0, &self.0).await);
+                            Ok(SimpleString::new(b"-1").bytes().to_vec())
+                        } else {
+                            get_value_from_redis_type(&value.value)
+                        }
+                    }
+                },
+                None => get_value_from_redis_type(&value.value),
             }
         } else {
             Ok(SimpleString::new(b"-1").bytes().to_vec())
         }
     }
 }
-impl Set {
-    async fn exec(&self) -> Result<Vec<u8>> {
-        let db = self.2.lock().await;
-        if db.insert(self.0.clone(), self.1.clone()).is_some() {
-            Ok(SimpleString::new(b"OK").bytes().to_vec())
-        } else {
-            Ok(SimpleString::new(b"-1").bytes().to_vec())
+//TODO:other redis type map
+fn get_value_from_redis_type(v: &RedisValue) -> Result<Vec<u8>> {
+    match v {
+        RedisValue::String(s) => {
+            log::debug!("get v is {s}");
+            Ok(BulkString::new(s.as_bytes()).bytes().to_vec())
         }
+        _ => Ok(SimpleString::new(b"-1").bytes().to_vec()),
+    }
+}
+
+impl Set<'_> {
+    async fn exec(&mut self) -> Result<Vec<u8>> {
+        self.2
+            .insert(
+                RDB_VERSION,
+                self.0.clone(),
+                self.1.value.clone(),
+                self.1.expiry.clone(),
+            )
+            .await;
+        Ok(SimpleString::new(b"OK").bytes().to_vec())
     }
 }
 
@@ -136,7 +137,7 @@ impl<'a> Config<'a> {
     }
 }
 
-pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Result<Vec<u8>> {
+pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &mut Server) -> Result<Vec<u8>> {
     log::debug!("get s:{:?}", s);
     match s[1].to_ascii_lowercase().as_slice() {
         b"ping" => crate::commands::Ping.exec(),
@@ -175,7 +176,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
             }
             crate::commands::Get(
                 String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
-                Arc::clone(&server.storage),
+                &mut server.storage,
             )
             .exec()
             .await
@@ -184,29 +185,39 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
             3 => {
                 crate::commands::Set(
                     String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
-                    (
-                        String::from_utf8(s[5].to_vec()).expect("convert get arg to string"),
-                        None,
-                    ),
-                    Arc::clone(&server.storage),
+                    KeyValue {
+                        value: RedisValue::String(
+                            String::from_utf8(s[5].to_vec()).expect("convert get arg to string"),
+                        ),
+                        expiry: None,
+                    },
+                    &mut server.storage,
                 )
                 .exec()
                 .await
             }
             5 => {
-                let time_str = String::from_utf8(s[9].to_vec()).expect("conver time to str ");
-                log::debug!(" set time is {}", time_str);
+                let time_num = String::from_utf8(s[9].to_vec())
+                    .expect("conver time to str ")
+                    .parse()
+                    .expect("parse time num error");
+                log::debug!(" set time is {}", time_num);
 
                 match s[7] {
                     b"px" => {
                         crate::commands::Set(
                             String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
-                            (
-                                String::from_utf8(s[5].to_vec())
-                                    .expect("convert get arg to string"),
-                                Some((time_str + " ms", time::Instant::now())),
-                            ),
-                            Arc::clone(&server.storage),
+                            KeyValue {
+                                value: RedisValue::String(
+                                    String::from_utf8(s[5].to_vec())
+                                        .expect("convert get arg to string"),
+                                ),
+                                expiry: Some((
+                                    Expiry::Milliseconds(time_num),
+                                    time::Instant::now(),
+                                )),
+                            },
+                            &mut server.storage,
                         )
                         .exec()
                         .await
@@ -214,12 +225,17 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
                     b"ex" => {
                         crate::commands::Set(
                             String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
-                            (
-                                String::from_utf8(s[5].to_vec())
-                                    .expect("convert get arg to string"),
-                                Some((time_str + " s", time::Instant::now())),
-                            ),
-                            Arc::clone(&server.storage),
+                            KeyValue {
+                                value: RedisValue::String(
+                                    String::from_utf8(s[5].to_vec())
+                                        .expect("convert get arg to string"),
+                                ),
+                                expiry: Some((
+                                    Expiry::Seconds(time_num as u64),
+                                    time::Instant::now(),
+                                )),
+                            },
+                            &mut server.storage,
                         )
                         .exec()
                         .await
