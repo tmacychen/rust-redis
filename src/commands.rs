@@ -120,7 +120,8 @@ impl<'a> Keys<'a> {
                 }
                 Ok(ret_array.build().bytes().to_vec())
             } else {
-                Ok(NULL_BULK_STRING.bytes().to_vec())
+                Ok(SimpleString::new(b"-1").bytes().to_vec())
+                // Ok(NULL_BULK_STRING.bytes().to_vec())
             }
         }
     }
