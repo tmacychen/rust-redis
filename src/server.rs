@@ -1,22 +1,14 @@
 use crate::db::{self, Dbconf, RdbFile};
 use anyhow::{bail, Result};
 use resp_protocol::Array;
-use std::sync::Arc;
 use tklog::info;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::Mutex,
 };
 
 use crate::commands;
 const BUF_SIZE: usize = 100;
-
-// #[derive(Clone)]
-// pub struct ServerOption {
-//     pub dir: String,
-//     pub db_filename: String,
-// }
 
 #[derive(Clone)]
 pub struct Server {
@@ -33,22 +25,25 @@ impl Server {
         server.init().await;
         server
     }
-    pub async fn init(&mut self) {}
+    pub async fn init(&mut self) {
+        log::info!("server init executed !!");
+    }
 
     pub async fn handle_client(&mut self, mut stream: TcpStream) -> Result<()> {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
         loop {
             let n = stream.read(&mut buf).await?;
             if n == 0 {
-                info!("read size is 0,break loop !");
+                info!("read size is 0, [A client connection CLOSED !] !");
                 break;
-            }
+            };
 
-            log::debug!("read from stream bytes num is  {}", n);
             log::debug!(
-                "read from stream  is  {}",
+                "[A Client connected !] read from stream bytes num is  {}\nto string is {}",
+                n,
                 String::from_utf8_lossy(&buf[0..n]).to_string()
             );
+
             let read_array: Array = Array::parse(&buf, &mut 0, &n).expect("bulkString parse error");
             log::debug!("read from stream is {:?}", read_array);
 

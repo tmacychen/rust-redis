@@ -1,7 +1,7 @@
 use std::time;
 
 use crate::{
-    db::{self, Dbconf, Expiry, KeyValue, RdbFile, RedisValue, DB_NUM, RDB_VERSION},
+    db::{Dbconf, Expiry, KeyValue, RdbFile, RedisValue, DB_NUM},
     server::Server,
 };
 use anyhow::{bail, Result};
@@ -16,6 +16,8 @@ pub struct Echo(BulkString);
 pub struct Get<'a>(String, &'a mut RdbFile);
 
 pub struct Set<'a>(String, KeyValue, &'a mut RdbFile);
+
+pub struct Keys<'a>(&'a [&'a [u8]], &'a RdbFile);
 
 impl Ping {
     fn exec(&self) -> Result<Vec<u8>> {
@@ -83,13 +85,43 @@ impl Set<'_> {
     async fn exec(&mut self) -> Result<Vec<u8>> {
         self.2
             .insert(
-                RDB_VERSION,
+                DB_NUM,
                 self.0.clone(),
                 self.1.value.clone(),
                 self.1.expiry.clone(),
             )
             .await;
         Ok(SimpleString::new(b"OK").bytes().to_vec())
+    }
+}
+impl<'a> Keys<'a> {
+    pub fn new(cmd: &'a [&[u8]], rdb_file: &'a RdbFile) -> Self {
+        Keys(cmd, rdb_file)
+    }
+    async fn exec(&mut self) -> Result<Vec<u8>> {
+        log::debug!("get arg is {:?}", &self.0);
+        let mut ret_array = ArrayBuilder::new();
+
+        //"[$2 a*]" or "[$1 *]"
+        let (last, first) = self.0.split_last().expect("split keys args error");
+        if first[0][1] > b'1' {
+            let (star, a) = last.split_last().expect("split * from slice");
+            log::debug!(
+                "star is {} other is {:?}",
+                String::from_utf8_lossy(&[*star]),
+                a
+            );
+            Ok(SimpleString::new(b"-1").bytes().to_vec())
+        } else {
+            if let Some(keys) = self.1.keys(DB_NUM).await {
+                for k in keys {
+                    ret_array.insert(RespType::BulkString(BulkString::new(k.as_bytes())));
+                }
+                Ok(ret_array.build().bytes().to_vec())
+            } else {
+                Ok(SimpleString::new(b"-1").bytes().to_vec())
+            }
+        }
     }
 }
 
@@ -246,6 +278,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &mut Server) -
             _ => bail!("set arg is error"),
         },
         b"config" => Config::new(&s[2..], &server.db_conf).exec(),
+        b"keys" => Keys::new(&s[2..], &server.storage).exec().await,
 
         _ => bail!("cmd parse error"),
     }

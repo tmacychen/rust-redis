@@ -1,14 +1,5 @@
 use dashmap::DashMap;
-use std::{path::PathBuf, time::Instant};
-
-use anyhow::{Context, Result};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use crc64fast::Digest;
-use tokio::fs::{File, OpenOptions};
-use tokio::io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
-
-// pub type ExpireTime = (String, Instant);
-// pub type ValueType = (String, Option<ExpireTime>);
+use std::time::Instant;
 
 #[derive(Debug, Clone, Default)]
 pub struct Dbconf {
@@ -148,7 +139,7 @@ impl RdbFile {
     // 创建一个新的RDB文件
     pub fn new(version: u32) -> Self {
         Self {
-            version,
+            version: version,
             aux_fields: DashMap::new(),
             databases: DashMap::new(),
         }
@@ -161,6 +152,11 @@ impl RdbFile {
 
     // 异步获取指定数据库中的键值对
     pub async fn get(&self, db: u32, key: &str) -> Option<KeyValue> {
+        log::debug!("database is {:?} db_num is {}", self.databases, db);
+        log::debug!(
+            "get debug :{:?}",
+            self.databases.get(&db).expect("get db error").get(key)
+        );
         match self.databases.get(&db).expect("get db error").get(key) {
             Some(v) => Some(v.value().clone()),
             None => None,
@@ -175,13 +171,23 @@ impl RdbFile {
         value: RedisValue,
         expiry: Option<(Expiry, Instant)>,
     ) {
-        self.databases.entry(db).or_insert(DashMap::new()).insert(
-            key,
-            KeyValue {
+        self.databases
+            .entry(db)
+            .or_insert(DashMap::new())
+            .entry(key.clone())
+            .or_insert(KeyValue {
                 value: value,
                 expiry: expiry,
-            },
-        );
+            });
+        log::debug!(
+            "insert debug :{:?}",
+            self.databases
+                .get(&DB_NUM)
+                .expect("get db error")
+                .get(&key)
+                .expect("get key error")
+                .value()
+        )
     }
 
     // 异步删除指定的键
@@ -197,13 +203,12 @@ impl RdbFile {
     }
 
     // 异步获取所有键
-    pub async fn keys(&self, db: u32) -> Vec<String> {
-        self.databases
-            .get(&db)
-            .expect("get db error")
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect()
+    pub async fn keys(&self, db: u32) -> Option<Vec<String>> {
+        if let Some(database) = self.databases.get(&db) {
+            Some(database.iter().map(|entry| entry.key().clone()).collect())
+        } else {
+            None
+        }
     }
 
     // TODO: rewrite for get size
@@ -218,42 +223,3 @@ impl RdbFile {
         self.databases.len()
     }
 }
-
-// #[derive(Default)]
-// pub struct DataBase {
-//     kv_db: DashMap<String, ValueType>,
-//     // db_file: (String, String, Option<File>), // (dir,db_file_name,db_file)
-// }
-
-// impl DataBase {
-//     pub fn new() -> Self {
-//         DataBase {
-//             kv_db: DashMap::new(),
-//             ..Default::default()
-//         }
-//     }
-//     pub fn init_db_file(&mut self, dir: &str, db_file_name: &str) {
-//         let mut file_name = PathBuf::new();
-//         file_name.push(dir);
-//         file_name.push(db_file_name);
-//         log::debug!("file name is {}", file_name.as_path().to_str().unwrap());
-
-//         // self.db_file = (
-//         //     dir.to_string(),
-//         //     db_file_name.to_string(),
-//         //     Some(File::create(file_name).expect("can't create a db file")),
-//         // );
-//     }
-//     pub fn insert(&self, k: String, v: ValueType) -> Option<ValueType> {
-//         self.kv_db.insert(k, v)
-//     }
-//     pub fn delete(&self, k: &str) -> Option<(String, ValueType)> {
-//         self.kv_db.remove(k)
-//     }
-//     pub fn get(&self, k: &str) -> Option<ValueType> {
-//         self.kv_db.get(k).map(|v| v.clone())
-//     }
-//     pub fn keys(&self) -> Vec<String> {
-//         self.kv_db.iter().map(|entry| entry.key().clone()).collect()
-//     }
-// }
