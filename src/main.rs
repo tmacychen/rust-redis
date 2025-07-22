@@ -7,6 +7,8 @@ use tklog::{error, info, Format, LEVEL, LOG};
 
 use clap::Parser;
 
+use crate::db::{RdbFile, RDB_VERSION};
+
 mod commands;
 mod db;
 mod server;
@@ -45,7 +47,8 @@ async fn main() -> Result<()> {
         db_conf.set(args.dir.clone(), args.dbfilename.clone());
     }
 
-    let server_arc = Arc::new(Mutex::new(server::Server::new(db_conf).await));
+    let rdb_file = RdbFile::new(RDB_VERSION);
+    let server_arc = Arc::new(Mutex::new(server::Server::new(db_conf, rdb_file).await));
     loop {
         let stream = listener.accept().await;
         match stream {

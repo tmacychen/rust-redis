@@ -17,9 +17,9 @@ pub struct Server {
 }
 
 impl Server {
-    pub async fn new(db_conf: db::Dbconf) -> Self {
+    pub async fn new(db_conf: db::Dbconf, rdb_file: RdbFile) -> Self {
         let mut server = Server {
-            storage: RdbFile::new(db::RDB_VERSION),
+            storage: rdb_file,
             db_conf: db_conf,
         };
         server.init().await;

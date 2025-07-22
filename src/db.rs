@@ -38,7 +38,7 @@ const TYPE_EXPIRETIME: u8 = 0xFD;
 const TYPE_EXPIRETIME_MS: u8 = 0xFC;
 
 // DB number for test
-pub const DB_NUM: u32 = 0;
+pub const DB_NUM: u64 = 0;
 
 // RDB文件中的数据类型
 #[derive(Debug, Clone, PartialEq)]
@@ -61,8 +61,8 @@ pub enum RDB_V_Type {
 // 过期时间类型
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expiry {
-    Seconds(u64),
-    Milliseconds(u128),
+    Seconds(u32),
+    Milliseconds(u64),
 }
 
 // 支持过期时间的键值对
@@ -132,7 +132,7 @@ FF                          ## End of RDB file indicator
 pub struct RdbFile {
     pub version: u32,
     pub aux_fields: DashMap<String, String>,
-    pub databases: DashMap<u32, DashMap<String, KeyValue>>,
+    pub databases: DashMap<u64, DashMap<String, KeyValue>>,
 }
 
 impl RdbFile {
@@ -151,7 +151,7 @@ impl RdbFile {
     }
 
     // 异步获取指定数据库中的键值对
-    pub async fn get(&self, db: u32, key: &str) -> Option<KeyValue> {
+    pub async fn get(&self, db: u64, key: &str) -> Option<KeyValue> {
         log::debug!("database is {:?} db_num is {}", self.databases, db);
         log::debug!(
             "get debug :{:?}",
@@ -166,7 +166,7 @@ impl RdbFile {
     // 异步设置键值对，如果已存在则更新
     pub async fn insert(
         &mut self,
-        db: u32,
+        db: u64,
         key: String,
         value: RedisValue,
         expiry: Option<(Expiry, Instant)>,
@@ -213,7 +213,7 @@ impl RdbFile {
 
     // TODO: rewrite for get size
     // 异步获取数据库大小（键值对数量）
-    pub async fn dbsize(&self, db: u32) -> usize {
+    pub async fn dbsize(&self, db: u64) -> usize {
         self.databases.get(&db).map(|kvs| kvs.len()).unwrap_or(0)
     }
 
@@ -221,5 +221,341 @@ impl RdbFile {
     // 获取数据库数量
     pub fn db_count(&self) -> usize {
         self.databases.len()
+    }
+}
+
+use anyhow::Result;
+use byteorder::{LittleEndian, ReadBytesExt};
+use crc64fast::Digest;
+use tokio::io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
+
+// RDB文件异步解析器
+pub struct RdbParser<R: AsyncReadExt + AsyncSeekExt + Unpin> {
+    reader: R,
+    crc: Digest,
+}
+
+impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader,
+            crc: Digest::new(),
+        }
+    }
+
+    // 异步解析整个RDB文件
+    pub async fn parse(&mut self) -> Result<RdbFile> {
+        // 读取并验证魔数
+        let mut magic = [0u8; 5];
+        self.read_bytes(&mut magic).await?;
+
+        if &magic != MAGIC_STRING {
+            anyhow::bail!("Not a valid RDB file");
+        }
+
+        // 读取版本号
+        let mut version_bytes = [0u8; 4];
+        self.read_bytes(&mut version_bytes).await?;
+
+        let version_str = String::from_utf8_lossy(&version_bytes);
+        let version = version_str.parse::<u32>()?;
+
+        let rdb_file = RdbFile::new(version);
+        let mut current_db = DB_NUM;
+
+        loop {
+            let byte = match self.read_u8().await {
+                Ok(b) => b,
+                Err(e) => {
+                    // 尝试将 anyhow::Error 转换为 io::Error
+                    if let Some(io_err) = e.downcast_ref::<io::Error>() {
+                        if io_err.kind() == io::ErrorKind::UnexpectedEof {
+                            break; // 遇到文件结束，退出循环
+                        }
+                    }
+                    return Err(e); // 其他错误，向上传播
+                }
+            };
+
+            match byte {
+                TYPE_AUX => {
+                    // 辅助字段
+                    let key = self.read_string().await?;
+                    let value = self.read_string().await?;
+                    rdb_file.aux_fields.insert(key, value);
+                }
+                TYPE_SELECTDB => {
+                    // 数据库选择器
+                    current_db = self.read_length().await?;
+                    rdb_file
+                        .databases
+                        .entry(current_db)
+                        .or_insert(DashMap::new());
+
+                    // 检查是否有RESIZEDB字段
+                    if let Ok(TYPE_RESIZEDB) = self.peek_u8().await {
+                        self.read_u8().await?; // 消耗掉0xFB
+                        let _ht_size = self.read_length().await?;
+                        let _expires_size = self.read_length().await?;
+                    }
+                }
+                TYPE_EOF => {
+                    // 文件结束
+                    break;
+                }
+                TYPE_EXPIRETIME | TYPE_EXPIRETIME_MS => {
+                    // 处理带过期时间的键值对
+                    let expiry_type = byte;
+                    let expiry = match expiry_type {
+                        0xFD => Expiry::Seconds(self.read_u32::<LittleEndian>().await?),
+                        0xFC => Expiry::Milliseconds(self.read_u64::<LittleEndian>().await?),
+                        _ => unreachable!(),
+                    };
+
+                    let value_type = self.read_u8().await?;
+                    let key = self.read_string().await?;
+                    let value = self.parse_value(value_type).await?;
+
+                    let key_value = KeyValue {
+                        value,
+                        expiry: Some((expiry, Instant::now())),
+                    };
+
+                    rdb_file
+                        .databases
+                        .entry(current_db)
+                        .or_insert(DashMap::new())
+                        .entry(key)
+                        .or_insert(key_value);
+                }
+                _ => {
+                    // 没有过期时间的键值对
+                    let value_type = byte;
+                    let key = self.read_string().await?;
+                    let value = self.parse_value(value_type).await?;
+
+                    let key_value = KeyValue {
+                        value,
+                        expiry: None,
+                    };
+
+                    rdb_file
+                        .databases
+                        .entry(current_db)
+                        .or_insert(DashMap::new())
+                        .entry(key)
+                        .or_insert(key_value);
+                }
+            }
+        }
+
+        // 验证CRC64校验和
+        let file_size = self.reader.seek(SeekFrom::End(0)).await?;
+        self.reader.seek(SeekFrom::Start(file_size - 8)).await?;
+        let stored_checksum = self.read_u64::<LittleEndian>().await?;
+        let computed_checksum = self.crc.sum64();
+
+        if stored_checksum != computed_checksum {
+            anyhow::bail!("CRC64 checksum mismatch");
+        }
+
+        Ok(rdb_file)
+    }
+
+    // 解析不同类型的值
+    async fn parse_value(&mut self, value_type: u8) -> Result<RedisValue> {
+        match value_type {
+            0x00 => {
+                // 简单字符串
+                let s = self.read_string().await?;
+                Ok(RedisValue::String(s))
+            }
+            0x01 => {
+                // 列表
+                let len = self.read_length().await?;
+                let mut list = Vec::with_capacity(len as usize);
+                for _ in 0..len {
+                    list.push(self.read_string().await?);
+                }
+                Ok(RedisValue::List(list))
+            }
+            0x02 => {
+                // 哈希
+                let len = self.read_length().await?;
+                let mut hash = Vec::with_capacity(len as usize);
+                for _ in 0..len {
+                    let key = self.read_string().await?;
+                    let value = self.read_string().await?;
+                    hash.push((key, value));
+                }
+                Ok(RedisValue::Hash(hash))
+            }
+            0x03 => {
+                // 集合
+                let len = self.read_length().await?;
+                let mut set = Vec::with_capacity(len as usize);
+                for _ in 0..len {
+                    set.push(self.read_string().await?);
+                }
+                Ok(RedisValue::Set(set))
+            }
+            0x04 => {
+                // 有序集合
+                let len = self.read_length().await?;
+                let mut sorted_set = Vec::with_capacity(len as usize);
+                for _ in 0..len {
+                    let element = self.read_string().await?;
+                    let score = self.read_double().await?;
+                    sorted_set.push((element, score));
+                }
+                Ok(RedisValue::SortedSet(sorted_set))
+            }
+            // 其他类型的解析实现...
+            _ => anyhow::bail!("Unsupported value type: {}", value_type),
+        }
+    }
+
+    // 读取字符串
+    async fn read_string(&mut self) -> Result<String> {
+        let len = self.read_length().await?;
+        let mut bytes = vec![0u8; len as usize];
+        self.read_bytes(&mut bytes).await?;
+        Ok(String::from_utf8(bytes).expect("Invalid UTF-8 string"))
+    }
+
+    // 读取长度编码
+    async fn read_length(&mut self) -> Result<u64> {
+        let first_byte = self.read_u8().await?;
+
+        if first_byte < 0x40 {
+            // 短长度 (0-63)
+            Ok(first_byte as u64)
+        } else if first_byte < 0x80 {
+            // 中等长度 (64-16383)
+            let second_byte = self.read_u8().await?;
+            Ok((((first_byte & 0x3F) as u64) << 8) | (second_byte as u64))
+        } else if first_byte < 0xC0 {
+            // 长整数
+            let len = self.read_u64::<LittleEndian>().await?;
+            Ok(len)
+        } else {
+            // 特殊编码
+            match first_byte {
+                0xFE => {
+                    // 存储为整数的字符串
+                    let int_type = self.read_u8().await?;
+                    match int_type {
+                        0 => {
+                            // 8位有符号整数
+                            let value = self.read_i8().await?;
+                            Ok(value as u64)
+                        }
+                        1 => {
+                            // 16位有符号整数
+                            let value = self.read_i16::<LittleEndian>().await?;
+                            Ok(value as u64)
+                        }
+                        2 => {
+                            // 32位有符号整数
+                            let value = self.read_i32::<LittleEndian>().await?;
+                            Ok(value as u64)
+                        }
+                        _ => anyhow::bail!("Unsupported integer encoding: {}", int_type),
+                    }
+                }
+                _ => anyhow::bail!("Unsupported length encoding: {}", first_byte),
+            }
+        }
+    }
+
+    // 读取双精度浮点数
+    async fn read_double(&mut self) -> Result<f64> {
+        let len = self.read_length().await?;
+
+        if len == 253 {
+            // 特殊值: +inf
+            Ok(f64::INFINITY)
+        } else if len == 254 {
+            // 特殊值: -inf
+            Ok(f64::NEG_INFINITY)
+        } else if len == 255 {
+            // 特殊值: nan
+            Ok(f64::NAN)
+        } else if len == 8 {
+            // 正常的64位双精度浮点数
+            Ok(self.read_f64::<LittleEndian>().await?)
+        } else {
+            anyhow::bail!("Unsupported double length: {}", len)
+        }
+    }
+
+    // 辅助读取方法，同时更新CRC
+    async fn read_bytes(&mut self, buf: &mut [u8]) -> Result<usize> {
+        let bytes_read = self.reader.read(buf).await?;
+        self.crc.write(&buf[0..bytes_read]);
+        Ok(bytes_read)
+    }
+
+    // 读取单个字节，同时更新CRC
+    async fn read_u8(&mut self) -> Result<u8> {
+        let byte = self.reader.read_u8().await?;
+        self.crc.write(&[byte]);
+        Ok(byte)
+    }
+
+    // 读取整数，同时更新CRC
+    async fn read_u32<T: byteorder::ByteOrder>(&mut self) -> Result<u32> {
+        let mut buf = [0u8; 4];
+        self.read_bytes(&mut buf).await?;
+        Ok(T::read_u32(&buf))
+    }
+
+    // 读取长整数，同时更新CRC
+    async fn read_u64<T: byteorder::ByteOrder>(&mut self) -> Result<u64> {
+        let mut buf = [0u8; 8];
+        self.read_bytes(&mut buf).await?;
+        Ok(T::read_u64(&buf))
+    }
+
+    // 读取长整数，同时更新CRC
+    async fn read_u128<T: byteorder::ByteOrder>(&mut self) -> Result<u128> {
+        let mut buf = [0u8; 16];
+        self.read_bytes(&mut buf).await?;
+        Ok(T::read_u128(&buf))
+    }
+
+    // 读取有符号整数，同时更新CRC
+    async fn read_i8(&mut self) -> Result<i8> {
+        let byte = self.read_u8().await?;
+        Ok(byte as i8)
+    }
+
+    // 读取有符号短整数，同时更新CRC
+    async fn read_i16<T: byteorder::ByteOrder>(&mut self) -> Result<i16> {
+        let mut buf = [0u8; 2];
+        self.read_bytes(&mut buf).await?;
+        Ok(T::read_i16(&buf))
+    }
+
+    // 读取有符号整数，同时更新CRC
+    async fn read_i32<T: byteorder::ByteOrder>(&mut self) -> Result<i32> {
+        let mut buf = [0u8; 4];
+        self.read_bytes(&mut buf).await?;
+        Ok(T::read_i32(&buf))
+    }
+
+    // 读取双精度浮点数，同时更新CRC
+    async fn read_f64<T: byteorder::ByteOrder>(&mut self) -> Result<f64> {
+        let mut buf = [0u8; 8];
+        self.read_bytes(&mut buf).await?;
+        Ok(T::read_f64(&buf))
+    }
+
+    // 查看下一个字节但不消耗它
+    async fn peek_u8(&mut self) -> Result<u8> {
+        let current_pos = self.reader.seek(SeekFrom::Current(0)).await?;
+        let byte = self.reader.read_u8().await?;
+        self.reader.seek(SeekFrom::Start(current_pos)).await?;
+        Ok(byte)
     }
 }

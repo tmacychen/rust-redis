@@ -42,7 +42,7 @@ impl Get<'_> {
                             t,
                             instant_time.elapsed().as_millis()
                         );
-                        if t < instant_time.elapsed().as_millis() {
+                        if t < instant_time.elapsed().as_millis() as u64 {
                             log::debug!("delete a key {}", db.delete(0, &self.0).await);
 
                             Ok(NULL_BULK_STRING.bytes().to_vec())
@@ -56,7 +56,7 @@ impl Get<'_> {
                             t,
                             instant_time.elapsed().as_millis()
                         );
-                        if t < instant_time.elapsed().as_secs() {
+                        if t < instant_time.elapsed().as_secs() as u32 {
                             log::debug!("delete a key {}", db.delete(0, &self.0).await);
                             Ok(NULL_BULK_STRING.bytes().to_vec())
                         } else {
