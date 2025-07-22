@@ -5,7 +5,7 @@ use crate::{
     server::Server,
 };
 use anyhow::{bail, Result};
-use resp_protocol::{Array, ArrayBuilder, BulkString, Integer, RespType, SimpleString};
+use resp_protocol::{ArrayBuilder, BulkString, RespType, SimpleString};
 
 #[derive(Clone, Debug)]
 pub struct Ping;
@@ -44,7 +44,7 @@ impl Get<'_> {
                         );
                         if t < instant_time.elapsed().as_millis() {
                             log::debug!("delete a key {}", db.delete(0, &self.0).await);
-                            Ok(Array::from_bytes(Integer::new(-1).bytes()).to_vec())
+                            Ok(SimpleString::new(b"-1").bytes().to_vec())
                         } else {
                             get_value_from_redis_type(&value.value)
                         }
@@ -57,7 +57,7 @@ impl Get<'_> {
                         );
                         if t < instant_time.elapsed().as_secs() {
                             log::debug!("delete a key {}", db.delete(0, &self.0).await);
-                            Ok(Array::from_bytes(Integer::new(-1).bytes()).to_vec())
+                            Ok(SimpleString::new(b"-1").bytes().to_vec())
                         } else {
                             get_value_from_redis_type(&value.value)
                         }
@@ -66,7 +66,7 @@ impl Get<'_> {
                 None => get_value_from_redis_type(&value.value),
             }
         } else {
-            Ok(Array::from_bytes(Integer::new(-1).bytes()).to_vec())
+            Ok(SimpleString::new(b"-1").bytes().to_vec())
         }
     }
 }
@@ -77,7 +77,7 @@ fn get_value_from_redis_type(v: &RedisValue) -> Result<Vec<u8>> {
             log::debug!("get v is {s}");
             Ok(BulkString::new(s.as_bytes()).bytes().to_vec())
         }
-        _ => Ok(Array::from_bytes(Integer::new(-1).bytes()).to_vec()),
+        _ => Ok(SimpleString::new(b"-1").bytes().to_vec()),
     }
 }
 
@@ -111,7 +111,7 @@ impl<'a> Keys<'a> {
                 String::from_utf8_lossy(&[*star]),
                 a
             );
-            Ok(Array::from_bytes(Integer::new(-1).bytes()).to_vec())
+            Ok(SimpleString::new(b"-1").bytes().to_vec())
         } else {
             if let Some(keys) = self.1.keys(DB_NUM).await {
                 for k in keys {
@@ -119,7 +119,7 @@ impl<'a> Keys<'a> {
                 }
                 Ok(ret_array.build().bytes().to_vec())
             } else {
-                Ok(Array::from_bytes(Integer::new(-1).bytes()).to_vec())
+                Ok(SimpleString::new(b"-1").bytes().to_vec())
             }
         }
     }
@@ -162,7 +162,7 @@ impl<'a> Config<'a> {
                     )));
                     Ok(ret.build().bytes().to_vec())
                 }
-                _ => Ok(Array::from_bytes(Integer::new(-1).bytes()).to_vec()),
+                _ => Ok(SimpleString::new(b"-1").bytes().to_vec()),
             },
             _ => bail!("unknown config sub cmd "),
         }
