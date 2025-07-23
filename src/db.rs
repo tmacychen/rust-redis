@@ -442,8 +442,9 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
             // 特殊编码
             match first_byte {
                 0xC0 => {
-                    // 表示长度为0
-                    Ok(0)
+                    // 表示长度为0x40 (64)
+                    let second_byte = self.read_u8().await?;
+                    Ok(second_byte as u64)
                 }
                 0xFE => {
                     // 存储为整数的字符串
