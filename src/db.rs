@@ -191,7 +191,7 @@ impl RdbFile {
     }
 
     // 异步删除指定的键
-    pub async fn delete(&mut self, db: u32, key: &str) -> bool {
+    pub async fn delete(&mut self, db: u64, key: &str) -> bool {
         if let Some(db_entry) = self.databases.get_mut(&db) {
             if let Some((k, _)) = db_entry.remove(key) {
                 if k == key {
@@ -203,7 +203,7 @@ impl RdbFile {
     }
 
     // 异步获取所有键
-    pub async fn keys(&self, db: u32) -> Option<Vec<String>> {
+    pub async fn keys(&self, db: u64) -> Option<Vec<String>> {
         if let Some(database) = self.databases.get(&db) {
             Some(database.iter().map(|entry| entry.key().clone()).collect())
         } else {
@@ -557,5 +557,212 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
         let byte = self.reader.read_u8().await?;
         self.reader.seek(SeekFrom::Start(current_pos)).await?;
         Ok(byte)
+    }
+}
+
+// RDB文件异步写入器
+pub struct RdbWriter<W: AsyncWriteExt + AsyncSeekExt + Unpin> {
+    writer: W,
+    crc: Digest,
+}
+
+impl<W: AsyncWriteExt + AsyncSeekExt + Unpin> RdbWriter<W> {
+    pub fn new(writer: W) -> Self {
+        Self {
+            writer,
+            crc: Digest::new(),
+        }
+    }
+
+    // 异步写入整个RDB文件
+    pub async fn write(&mut self, rdb_file: &RdbFile) -> Result<()> {
+        // 写入魔数和版本号
+        self.write_bytes(b"REDIS").await?;
+        self.write_bytes(format!("{:04}", rdb_file.version).as_bytes())
+            .await?;
+
+        // 写入辅助字段
+        for e in rdb_file.aux_fields.iter() {
+            self.write_u8(0xFA).await?;
+            self.write_string(e.key()).await?;
+            self.write_string(e.value()).await?;
+        }
+
+        // 写入各个数据库
+        for e in rdb_file.databases.iter() {
+            // 写入数据库选择器
+            let db_num = e.key();
+            let db_map = e.value();
+
+            self.write_u8(0xFE).await?;
+            self.write_length(*db_num as u64).await?;
+
+            // 写入RESIZEDB字段 (简化处理，使用估算值)
+            self.write_u8(0xFB).await?;
+            self.write_length(db_map.len() as u64).await?; // 哈希表大小
+            self.write_length(0).await?; // 过期哈希表大小
+
+            // 写入键值对
+            for e in db_map.iter() {
+                let key = e.key();
+                let kv = e.value();
+                if let Some((expiry, _timestamp)) = &kv.expiry {
+                    match expiry {
+                        Expiry::Seconds(secs) => {
+                            self.write_u8(0xFD).await?;
+                            self.write_u32::<LittleEndian>(*secs).await?;
+                        }
+                        Expiry::Milliseconds(millis) => {
+                            self.write_u8(0xFC).await?;
+                            self.write_u64::<LittleEndian>(*millis).await?;
+                        }
+                    }
+                }
+
+                // 写入值类型和键
+                self.write_value_type(&kv.value).await?;
+                self.write_string(key).await?;
+
+                // 写入值
+                self.write_value(&kv.value).await?;
+            }
+        }
+
+        // 写入文件结束标记
+        self.write_u8(0xFF).await?;
+
+        // 计算并写入CRC64校验和
+        let checksum = self.crc.sum64();
+        self.writer.seek(SeekFrom::End(0)).await?;
+        self.write_u64::<LittleEndian>(checksum).await?;
+
+        Ok(())
+    }
+
+    // 写入值类型
+    async fn write_value_type(&mut self, value: &RedisValue) -> Result<()> {
+        let type_byte = match value {
+            RedisValue::String(_) => 0x00,
+            RedisValue::List(_) => 0x01,
+            RedisValue::Hash(_) => 0x02,
+            RedisValue::Set(_) => 0x03,
+            RedisValue::SortedSet(_) => 0x04,
+            _ => return anyhow::bail!("Unsupported value type for writing"),
+        };
+        self.write_u8(type_byte).await
+    }
+
+    // 写入值
+    async fn write_value(&mut self, value: &RedisValue) -> Result<()> {
+        match value {
+            RedisValue::String(s) => self.write_string(s).await,
+            RedisValue::List(items) => {
+                self.write_length(items.len() as u64).await?;
+                for item in items {
+                    self.write_string(item).await?;
+                }
+                Ok(())
+            }
+            RedisValue::Hash(fields) => {
+                self.write_length(fields.len() as u64).await?;
+                for (k, v) in fields {
+                    self.write_string(k).await?;
+                    self.write_string(v).await?;
+                }
+                Ok(())
+            }
+            RedisValue::Set(items) => {
+                self.write_length(items.len() as u64).await?;
+                for item in items {
+                    self.write_string(item).await?;
+                }
+                Ok(())
+            }
+            RedisValue::SortedSet(items) => {
+                self.write_length(items.len() as u64).await?;
+                for (element, score) in items {
+                    self.write_string(element).await?;
+                    self.write_double(*score).await?;
+                }
+                Ok(())
+            }
+            _ => anyhow::bail!("Unsupported value type for writing"),
+        }
+    }
+
+    // 写入字符串
+    async fn write_string(&mut self, s: &str) -> Result<()> {
+        let bytes = s.as_bytes();
+        self.write_length(bytes.len() as u64).await?;
+        self.write_bytes(bytes).await
+    }
+
+    // 写入长度编码
+    async fn write_length(&mut self, len: u64) -> Result<()> {
+        if len < 64 {
+            // 短长度 (0-63)
+            self.write_u8(len as u8).await
+        } else if len < 16384 {
+            // 中等长度 (64-16383)
+            self.write_u8(0x40 | ((len >> 8) as u8)).await?;
+            self.write_u8((len & 0xFF) as u8).await
+        } else {
+            // 长长度
+            self.write_u8(0x80).await?;
+            self.write_u64::<LittleEndian>(len).await
+        }
+    }
+
+    // 写入双精度浮点数
+    async fn write_double(&mut self, value: f64) -> Result<()> {
+        if value.is_infinite() && value.is_sign_positive() {
+            // +inf
+            self.write_length(253).await
+        } else if value.is_infinite() && value.is_sign_negative() {
+            // -inf
+            self.write_length(254).await
+        } else if value.is_nan() {
+            // nan
+            self.write_length(255).await
+        } else {
+            // 正常的64位双精度浮点数
+            self.write_length(8).await?;
+            self.write_f64::<LittleEndian>(value).await
+        }
+    }
+
+    // 辅助写入方法，同时更新CRC
+    async fn write_bytes(&mut self, buf: &[u8]) -> Result<()> {
+        self.writer.write_all(buf).await?;
+        let _ = self.crc.write(buf);
+        Ok(())
+    }
+
+    // 写入单个字节，同时更新CRC
+    async fn write_u8(&mut self, byte: u8) -> Result<()> {
+        self.writer.write_all(&[byte]).await?;
+        let _ = self.crc.write(&[byte]);
+        Ok(())
+    }
+
+    // 写入整数，同时更新CRC
+    async fn write_u32<T: byteorder::ByteOrder>(&mut self, value: u32) -> Result<()> {
+        let mut buf = [0u8; 4];
+        T::write_u32(&mut buf, value);
+        self.write_bytes(&buf).await
+    }
+
+    // 写入长整数，同时更新CRC
+    async fn write_u64<T: byteorder::ByteOrder>(&mut self, value: u64) -> Result<()> {
+        let mut buf = [0u8; 8];
+        T::write_u64(&mut buf, value);
+        self.write_bytes(&buf).await
+    }
+
+    // 写入双精度浮点数，同时更新CRC
+    async fn write_f64<T: byteorder::ByteOrder>(&mut self, value: f64) -> Result<()> {
+        let mut buf = [0u8; 8];
+        T::write_f64(&mut buf, value);
+        self.write_bytes(&buf).await
     }
 }

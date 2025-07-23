@@ -1,8 +1,11 @@
-use crate::db::{self, Dbconf, RdbFile};
+use std::path::PathBuf;
+
+use crate::db::{self, Dbconf, RdbFile, RdbParser, RDB_VERSION};
 use anyhow::{bail, Result};
 use resp_protocol::Array;
 use tklog::info;
 use tokio::{
+    fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
@@ -17,13 +20,36 @@ pub struct Server {
 }
 
 impl Server {
-    pub async fn new(db_conf: db::Dbconf, rdb_file: RdbFile) -> Self {
-        let mut server = Server {
-            storage: rdb_file,
-            db_conf: db_conf,
-        };
+    pub async fn new(db_conf: db::Dbconf) -> Result<Self> {
+        let mut server: Server;
+        let mut file_path = PathBuf::from(db_conf.get_dir());
+        file_path.push(db_conf.get_db_filename());
+
+        //if file exists
+        if file_path.is_file() {
+            let mut rdbfile_reader = RdbParser::new(
+                File::open(
+                    file_path
+                        .into_os_string()
+                        .to_str()
+                        .expect("convert path error!"),
+                )
+                .await?,
+            );
+
+            server = Server {
+                storage: rdbfile_reader.parse().await.expect("rdb_file parse error"),
+                db_conf: db_conf,
+            };
+        } else {
+            server = Server {
+                storage: RdbFile::new(RDB_VERSION),
+                db_conf: db_conf,
+            };
+        }
+
         server.init().await;
-        server
+        Ok(server)
     }
     pub async fn init(&mut self) {
         log::info!("server init executed !!");

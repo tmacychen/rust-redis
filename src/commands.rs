@@ -271,7 +271,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &mut Server) -
                                         .expect("convert get arg to string"),
                                 ),
                                 expiry: Some((
-                                    Expiry::Seconds(time_num as u64),
+                                    Expiry::Seconds(time_num as u32),
                                     time::Instant::now(),
                                 )),
                             },

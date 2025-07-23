@@ -47,8 +47,11 @@ async fn main() -> Result<()> {
         db_conf.set(args.dir.clone(), args.dbfilename.clone());
     }
 
-    let rdb_file = RdbFile::new(RDB_VERSION);
-    let server_arc = Arc::new(Mutex::new(server::Server::new(db_conf, rdb_file).await));
+    let server_arc = Arc::new(Mutex::new(
+        server::Server::new(db_conf)
+            .await
+            .expect("create server error"),
+    ));
     loop {
         let stream = listener.accept().await;
         match stream {
