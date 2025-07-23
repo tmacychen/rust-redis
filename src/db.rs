@@ -441,6 +441,10 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
         } else {
             // 特殊编码
             match first_byte {
+                0xC0 => {
+                    // 表示长度为0
+                    Ok(0)
+                }
                 0xFE => {
                     // 存储为整数的字符串
                     let int_type = self.read_u8().await?;
