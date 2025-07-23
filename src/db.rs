@@ -224,7 +224,7 @@ impl RdbFile {
     }
 }
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
 use crc64fast::Digest;
 use tokio::io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
@@ -279,54 +279,47 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
 
             match byte {
                 TYPE_AUX => {
-                    // 辅助字段
-                    let key = self.read_string().await?;
-                    let value = self.read_string().await?;
-                    rdb_file.aux_fields.insert(key, value);
+                    // 处理辅助字段 (RDB版本7及以上)
+                    if version >= 7 {
+                        self.parse_auxiliary_field(&rdb_file).await?;
+                    } else {
+                        anyhow::bail!("Auxiliary field (0xFA) found in RDB version {}, but it was introduced in version 7", version);
+                    }
                 }
                 TYPE_SELECTDB => {
                     // 数据库选择器
-                    current_db = self.read_length().await?;
+                    current_db = self.read_u8().await? as u64;
                     rdb_file
                         .databases
                         .entry(current_db)
                         .or_insert(DashMap::new());
 
                     // 检查是否有RESIZEDB字段
-                    if let Ok(TYPE_RESIZEDB) = self.peek_u8().await {
-                        self.read_u8().await?; // 消耗掉0xFB
-                        let _ht_size = self.read_length().await?;
-                        let _expires_size = self.read_length().await?;
-                    }
+                    self.read_u8().await?; // 消耗掉0xFB
+                    let mut _ht_size = self.read_length().await?;
+                    let _expires_size = self.read_length().await?;
 
                     // 解析该数据库中的所有键值对
-                    loop {
-                        // 预览下一个字节，判断是键值对还是下一个数据库
-                        let next_byte = self.peek_u8().await?;
-
-                        if next_byte == TYPE_SELECTDB || next_byte == TYPE_EOF {
-                            // 遇到FE表示下一个数据库，遇到FF表示文件结束
-                            break;
-                        }
-
+                    while _ht_size > 0 {
+                        _ht_size -= 1;
                         let mut key: String = "".to_string();
                         let mut key_value: KeyValue = KeyValue {
                             value: RedisValue::String("".to_string()),
                             expiry: None,
                         };
                         // 解析键值对
-                        match next_byte {
+                        let byte = self.read_u8().await?;
+                        match byte {
                             TYPE_EXPIRETIME | TYPE_EXPIRETIME_MS => {
                                 // 处理带过期时间的键值对
-                                let expiry_type = byte;
-                                let expiry = match expiry_type {
+                                let expiry = match byte {
                                     0xFD => Expiry::Seconds(self.read_u32::<LittleEndian>().await?),
                                     0xFC => {
                                         Expiry::Milliseconds(self.read_u64::<LittleEndian>().await?)
                                     }
                                     _ => unreachable!(),
                                 };
-
+                                // TODO
                                 let value_type = self.read_u8().await?;
                                 key = self.read_string().await?;
                                 let value = self.parse_value(value_type).await?;
@@ -338,12 +331,12 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                             }
                             // 没有过期时间的键值对
                             _ => {
-                                let value_type = byte;
                                 key = self.read_string().await?;
-                                let value = self.parse_value(value_type).await?;
+                                let value = self.read_string().await?;
+                                log::debug!("{key}:{value}");
 
                                 key_value = KeyValue {
-                                    value,
+                                    value: RedisValue::String(value),
                                     expiry: None,
                                 };
                             }
@@ -356,6 +349,9 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                             .entry(key)
                             .or_insert(key_value);
                     }
+                }
+                TYPE_EOF => {
+                    break;
                 }
                 _ => {
                     anyhow::bail!(
@@ -377,6 +373,52 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
         }
 
         Ok(rdb_file)
+    }
+
+    // 解析辅助字段 (0xFA标记)
+    async fn parse_auxiliary_field(&mut self, rdb_file: &RdbFile) -> Result<()> {
+        // 读取键和值（均为Redis字符串类型）
+
+        loop {
+            let key = self.read_string().await?;
+
+            // 处理已知字段
+            match key.as_str() {
+                "redis-ver" => {
+                    let value = self.read_string().await?;
+                    rdb_file.aux_fields.insert(key.clone(), value.clone());
+                }
+                "redis-bits" => {
+                    let value = self.read_length().await?;
+                    log::debug!("redis bits is {value}");
+                    if value == 32 {
+                        rdb_file.aux_fields.insert(key.clone(), "32".to_string());
+                    } else if value == 64 {
+                        rdb_file.aux_fields.insert(key.clone(), "64".to_string());
+                    }
+                }
+                "ctime" => {
+                    let value = self.read_string().await?;
+                    rdb_file.aux_fields.insert(key.clone(), value.clone());
+                }
+                "used-mem" => {
+                    let value = self.read_string().await?;
+                    rdb_file.aux_fields.insert(key.clone(), value.clone());
+                }
+                _ => {
+                    // 忽略未知字段
+                    log::debug!("Ignoring unknown auxiliary field: {}", key);
+                }
+            }
+            if self
+                .peek_u8()
+                .await
+                .is_ok_and(|b| b == TYPE_AUX || b == TYPE_SELECTDB)
+            {
+                break;
+            }
+        }
+        Ok(())
     }
 
     // 解析不同类型的值
@@ -435,7 +477,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
     // 读取字符串
     async fn read_string(&mut self) -> Result<String> {
         let len = self.read_length().await?;
-        log::debug!("read string len is {len}");
+        log::debug!("read length is {len}");
 
         // 添加最大长度限制，防止内存溢出
         if len > 1024 * 1024 {
@@ -445,56 +487,61 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
 
         let mut bytes = vec![0u8; len as usize];
         self.read_bytes(&mut bytes).await?;
-        Ok(String::from_utf8(bytes).expect("Invalid UTF-8 string"))
+        String::from_utf8(bytes).context("Failed to convert bytes to String")
     }
 
     // 读取长度编码
     async fn read_length(&mut self) -> Result<u64> {
         let first_byte = self.read_u8().await?;
 
-        if first_byte < 0x40 {
-            // 短长度 (0-63)
-            Ok(first_byte as u64)
-        } else if first_byte < 0x80 {
-            // 中等长度 (64-16383)
-            let second_byte = self.read_u8().await?;
-            Ok((((first_byte & 0x3F) as u64) << 8) | (second_byte as u64))
-        } else if first_byte < 0xC0 {
-            // 长整数
-            let len = self.read_u64::<LittleEndian>().await?;
-            Ok(len)
-        } else {
-            // 特殊编码
-            match first_byte {
-                0xC0 => {
-                    // 表示长度为0x40 (64)
-                    let second_byte = self.read_u8().await?;
-                    Ok(second_byte as u64)
-                }
-                TYPE_SELECTDB => {
-                    // 存储为整数的字符串
-                    let int_type = self.read_u8().await?;
-                    match int_type {
-                        0 => {
-                            // 8位有符号整数
-                            let value = self.read_i8().await?;
-                            Ok(value as u64)
-                        }
-                        1 => {
-                            // 16位有符号整数
-                            let value = self.read_i16::<LittleEndian>().await?;
-                            Ok(value as u64)
-                        }
-                        2 => {
-                            // 32位有符号整数
-                            let value = self.read_i32::<LittleEndian>().await?;
-                            Ok(value as u64)
-                        }
-                        _ => anyhow::bail!("Unsupported integer encoding: {}", int_type),
+        // 提取前两位比特
+        let prefix = (first_byte & 0xC0) >> 6;
+
+        match prefix {
+            0 => {
+                // 00: 接下来的6位表示长度 (0-63)
+                Ok((first_byte & 0x3F) as u64)
+            }
+            1 => {
+                // 01: 读取一个额外字节，组合的14位表示长度 (64-16383)
+                let second_byte = self.read_u8().await?;
+                Ok((((first_byte & 0x3F) as u64) << 8) | (second_byte as u64))
+            }
+            2 => {
+                // 10: 丢弃剩余6位，接下来4字节表示长度
+                let len = self.read_u32::<LittleEndian>().await?;
+                Ok(len as u64)
+            }
+            3 => {
+                // 11: 特殊格式编码
+                let special_code = first_byte & 0x3F;
+
+                match special_code {
+                    0 => {
+                        // 8位有符号整数
+                        let value = self.read_i8().await?;
+                        Ok(value as u64)
+                    }
+                    1 => {
+                        // 16位有符号整数
+                        let value = self.read_i16::<LittleEndian>().await?;
+                        Ok(value as u64)
+                    }
+                    2 => {
+                        // 32位有符号整数
+                        let value = self.read_i32::<LittleEndian>().await?;
+                        Ok(value as u64)
+                    }
+                    3 => {
+                        // LZF压缩字符串（此处返回压缩标记，实际解析在别处处理）
+                        Err(anyhow::anyhow!("LZF compressed string length encoding should be handled in string parsing context"))
+                    }
+                    _ => {
+                        anyhow::bail!("Unsupported special length encoding: {}", special_code)
                     }
                 }
-                _ => anyhow::bail!("Unsupported length encoding: {}", first_byte),
             }
+            _ => unreachable!(), // 前两位只能是00,01,10,11
         }
     }
 
