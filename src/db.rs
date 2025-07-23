@@ -298,53 +298,70 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                         let _ht_size = self.read_length().await?;
                         let _expires_size = self.read_length().await?;
                     }
-                }
-                TYPE_EOF => {
-                    // 文件结束
-                    break;
-                }
-                TYPE_EXPIRETIME | TYPE_EXPIRETIME_MS => {
-                    // 处理带过期时间的键值对
-                    let expiry_type = byte;
-                    let expiry = match expiry_type {
-                        0xFD => Expiry::Seconds(self.read_u32::<LittleEndian>().await?),
-                        0xFC => Expiry::Milliseconds(self.read_u64::<LittleEndian>().await?),
-                        _ => unreachable!(),
-                    };
 
-                    let value_type = self.read_u8().await?;
-                    let key = self.read_string().await?;
-                    let value = self.parse_value(value_type).await?;
+                    // 解析该数据库中的所有键值对
+                    loop {
+                        // 预览下一个字节，判断是键值对还是下一个数据库
+                        let next_byte = self.peek_u8().await?;
 
-                    let key_value = KeyValue {
-                        value,
-                        expiry: Some((expiry, Instant::now())),
-                    };
+                        if next_byte == TYPE_SELECTDB || next_byte == TYPE_EOF {
+                            // 遇到FE表示下一个数据库，遇到FF表示文件结束
+                            break;
+                        }
 
-                    rdb_file
-                        .databases
-                        .entry(current_db)
-                        .or_insert(DashMap::new())
-                        .entry(key)
-                        .or_insert(key_value);
+                        let mut key: String = "".to_string();
+                        let mut key_value: KeyValue = KeyValue {
+                            value: RedisValue::String("".to_string()),
+                            expiry: None,
+                        };
+                        // 解析键值对
+                        match next_byte {
+                            TYPE_EXPIRETIME | TYPE_EXPIRETIME_MS => {
+                                // 处理带过期时间的键值对
+                                let expiry_type = byte;
+                                let expiry = match expiry_type {
+                                    0xFD => Expiry::Seconds(self.read_u32::<LittleEndian>().await?),
+                                    0xFC => {
+                                        Expiry::Milliseconds(self.read_u64::<LittleEndian>().await?)
+                                    }
+                                    _ => unreachable!(),
+                                };
+
+                                let value_type = self.read_u8().await?;
+                                key = self.read_string().await?;
+                                let value = self.parse_value(value_type).await?;
+
+                                key_value = KeyValue {
+                                    value,
+                                    expiry: Some((expiry, Instant::now())),
+                                };
+                            }
+                            // 没有过期时间的键值对
+                            _ => {
+                                let value_type = byte;
+                                key = self.read_string().await?;
+                                let value = self.parse_value(value_type).await?;
+
+                                key_value = KeyValue {
+                                    value,
+                                    expiry: None,
+                                };
+                            }
+                        }
+
+                        rdb_file
+                            .databases
+                            .entry(current_db)
+                            .or_insert(DashMap::new())
+                            .entry(key)
+                            .or_insert(key_value);
+                    }
                 }
                 _ => {
-                    // 没有过期时间的键值对
-                    let value_type = byte;
-                    let key = self.read_string().await?;
-                    let value = self.parse_value(value_type).await?;
-
-                    let key_value = KeyValue {
-                        value,
-                        expiry: None,
-                    };
-
-                    rdb_file
-                        .databases
-                        .entry(current_db)
-                        .or_insert(DashMap::new())
-                        .entry(key)
-                        .or_insert(key_value);
+                    anyhow::bail!(
+                        "Unexpected byte {:02X} at start of database or auxiliary field",
+                        byte
+                    )
                 }
             }
         }
@@ -454,7 +471,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                     let second_byte = self.read_u8().await?;
                     Ok(second_byte as u64)
                 }
-                0xFE => {
+                TYPE_SELECTDB => {
                     // 存储为整数的字符串
                     let int_type = self.read_u8().await?;
                     match int_type {
@@ -530,12 +547,12 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
         Ok(T::read_u64(&buf))
     }
 
-    // 读取长整数，同时更新CRC
-    async fn read_u128<T: byteorder::ByteOrder>(&mut self) -> Result<u128> {
-        let mut buf = [0u8; 16];
-        self.read_bytes(&mut buf).await?;
-        Ok(T::read_u128(&buf))
-    }
+    // // 读取长整数，同时更新CRC
+    // async fn read_u128<T: byteorder::ByteOrder>(&mut self) -> Result<u128> {
+    //     let mut buf = [0u8; 16];
+    //     self.read_bytes(&mut buf).await?;
+    //     Ok(T::read_u128(&buf))
+    // }
 
     // 读取有符号整数，同时更新CRC
     async fn read_i8(&mut self) -> Result<i8> {
@@ -660,7 +677,6 @@ impl<W: AsyncWriteExt + AsyncSeekExt + Unpin> RdbWriter<W> {
             RedisValue::Hash(_) => 0x02,
             RedisValue::Set(_) => 0x03,
             RedisValue::SortedSet(_) => 0x04,
-            _ => return anyhow::bail!("Unsupported value type for writing"),
         };
         self.write_u8(type_byte).await
     }
@@ -699,7 +715,6 @@ impl<W: AsyncWriteExt + AsyncSeekExt + Unpin> RdbWriter<W> {
                 }
                 Ok(())
             }
-            _ => anyhow::bail!("Unsupported value type for writing"),
         }
     }
 
