@@ -418,6 +418,14 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
     // 读取字符串
     async fn read_string(&mut self) -> Result<String> {
         let len = self.read_length().await?;
+        log::debug!("read string len is {len}");
+
+        // 添加最大长度限制，防止内存溢出
+        if len > 1024 * 1024 {
+            // 限制最大1MB
+            anyhow::bail!("String length exceeds maximum allowed size: {}", len);
+        }
+
         let mut bytes = vec![0u8; len as usize];
         self.read_bytes(&mut bytes).await?;
         Ok(String::from_utf8(bytes).expect("Invalid UTF-8 string"))

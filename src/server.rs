@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use crate::db::{self, Dbconf, RdbFile, RdbParser, RDB_VERSION};
 use anyhow::{bail, Result};
@@ -23,25 +23,21 @@ impl Server {
     pub async fn new(db_conf: db::Dbconf) -> Result<Self> {
         let mut server: Server;
         let mut file_path = PathBuf::from(db_conf.get_dir());
+        if !file_path.exists() {
+            fs::create_dir(file_path.as_path()).expect("creat redis dir error");
+        }
         file_path.push(db_conf.get_db_filename());
 
         //if file exists
-        if file_path.is_file() {
-            let mut rdbfile_reader = RdbParser::new(
-                File::open(
-                    file_path
-                        .into_os_string()
-                        .to_str()
-                        .expect("convert path error!"),
-                )
-                .await?,
-            );
+        if file_path.exists() {
+            let mut rdbfile_reader = RdbParser::new(File::open(file_path.as_path()).await?);
 
             server = Server {
                 storage: rdbfile_reader.parse().await.expect("rdb_file parse error"),
                 db_conf: db_conf,
             };
         } else {
+            File::create(file_path.as_path()).await?;
             server = Server {
                 storage: RdbFile::new(RDB_VERSION),
                 db_conf: db_conf,
