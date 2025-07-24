@@ -586,6 +586,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
     // 读取单个字节，同时更新CRC
     async fn read_u8(&mut self) -> Result<u8> {
         let byte = self.reader.read_u8().await?;
+        log::debug!("read a u8 byte {:02x}", byte);
         self.crc.write(&[byte]);
         Ok(byte)
     }
@@ -614,6 +615,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
     // 读取有符号整数，同时更新CRC
     async fn read_i8(&mut self) -> Result<i8> {
         let byte = self.reader.read_i8().await?;
+        log::debug!("read a i8 byte {:02x}", byte);
         self.crc.write(&[byte as u8]);
         Ok(byte)
     }
