@@ -61,9 +61,7 @@ async fn main() -> Result<()> {
                     if let Err(e) = server_clone.handle_client(stream).await {
                         error!("handle client error :{}", e);
                     }
-                })
-                .await
-                .expect("creat a thread error");
+                });
             }
             Err(e) => {
                 error!("listener accept error: {}", e);
