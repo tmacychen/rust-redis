@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use log::info;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Default)]
@@ -225,7 +226,7 @@ impl RdbFile {
 }
 
 use anyhow::{Context, Result};
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use crc64fast::Digest;
 use tokio::io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
@@ -263,20 +264,8 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
         let rdb_file = RdbFile::new(version);
         let mut current_db = DB_NUM;
 
-        loop {
-            let byte = match self.read_u8().await {
-                Ok(b) => b,
-                Err(e) => {
-                    // 尝试将 anyhow::Error 转换为 io::Error
-                    if let Some(io_err) = e.downcast_ref::<io::Error>() {
-                        if io_err.kind() == io::ErrorKind::UnexpectedEof {
-                            break; // 遇到文件结束，退出循环
-                        }
-                    }
-                    return Err(e); // 其他错误，向上传播
-                }
-            };
-
+        'outer: loop {
+            let byte = self.read_u8().await?;
             match byte {
                 TYPE_AUX => {
                     // 处理辅助字段 (RDB版本7及以上)
@@ -295,20 +284,21 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                         .or_insert(DashMap::new());
 
                     // 检查是否有RESIZEDB字段
-                    self.read_u8().await?; // 消耗掉0xFB
-                    let mut _ht_size = self.read_length().await?;
-                    let _expires_size = self.read_length().await?;
-
+                    if TYPE_RESIZEDB == self.peek_u8().await? {
+                        self.read_u8().await?; // 消耗掉0xFB
+                        let _ht_size = self.read_length().await?;
+                        let _expires_size = self.read_length().await?;
+                    }
                     // 解析该数据库中的所有键值对
-                    while _ht_size > 0 {
-                        _ht_size -= 1;
-                        let mut key: String = "".to_string();
-                        let mut key_value: KeyValue = KeyValue {
-                            value: RedisValue::String("".to_string()),
-                            expiry: None,
-                        };
+                    let mut key: String = "".to_string();
+                    let mut key_value: KeyValue = KeyValue {
+                        value: RedisValue::String("".to_string()),
+                        expiry: None,
+                    };
+
+                    loop {
                         // 解析键值对
-                        let byte = self.read_u8().await?;
+                        let byte = self.peek_u8().await?;
                         match byte {
                             TYPE_EXPIRETIME | TYPE_EXPIRETIME_MS => {
                                 // 处理带过期时间的键值对
@@ -319,24 +309,30 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                                     }
                                     _ => unreachable!(),
                                 };
-                                // TODO
                                 let value_type = self.read_u8().await?;
-                                key = self.read_string().await?;
-                                let value = self.parse_value(value_type).await?;
+                                let (key_1, value) = self.parse_value(value_type).await?;
+                                key = key_1;
 
                                 key_value = KeyValue {
                                     value,
                                     expiry: Some((expiry, Instant::now())),
                                 };
                             }
+                            TYPE_SELECTDB => {
+                                break;
+                            }
+                            TYPE_EOF => {
+                                break 'outer;
+                            }
                             // 没有过期时间的键值对
                             _ => {
-                                key = self.read_string().await?;
-                                let value = self.read_string().await?;
-                                log::debug!("{key}:{value}");
+                                let value_type = self.read_u8().await?;
+                                let (key_1, value) = self.parse_value(value_type).await?;
+                                key = key_1;
+                                log::debug!("{key}:{:?}", value);
 
                                 key_value = KeyValue {
-                                    value: RedisValue::String(value),
+                                    value: value,
                                     expiry: None,
                                 };
                             }
@@ -361,15 +357,26 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                 }
             }
         }
-
         // 验证CRC64校验和
-        let file_size = self.reader.seek(SeekFrom::End(0)).await?;
-        self.reader.seek(SeekFrom::Start(file_size - 8)).await?;
-        let stored_checksum = self.read_u64::<LittleEndian>().await?;
-        let computed_checksum = self.crc.sum64();
+        // let file_size = self.reader.seek(SeekFrom::End(0)).await?;
+        // self.reader.seek(SeekFrom::Start(file_size - 8)).await?;
+        self.pass_u8().await?;
+        match self.peek_u8().await {
+            Ok(_) => {
+                let stored_checksum = self.read_u64::<BigEndian>().await?;
+                let computed_checksum = self.crc.sum64();
 
-        if stored_checksum != computed_checksum {
-            anyhow::bail!("CRC64 checksum mismatch");
+                log::debug!(
+                    "stored :{:02x} computed :{:02x}",
+                    stored_checksum,
+                    computed_checksum
+                );
+
+                if stored_checksum != computed_checksum {
+                    anyhow::bail!("CRC64 checksum mismatch");
+                }
+            }
+            Err(e) => return Err(e),
         }
 
         Ok(rdb_file)
@@ -422,21 +429,23 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
     }
 
     // 解析不同类型的值
-    async fn parse_value(&mut self, value_type: u8) -> Result<RedisValue> {
+    async fn parse_value(&mut self, value_type: u8) -> Result<(String, RedisValue)> {
         match value_type {
             0x00 => {
                 // 简单字符串
-                let s = self.read_string().await?;
-                Ok(RedisValue::String(s))
-            }
+                let k = self.read_string().await?;
+                let v = self.read_string().await?;
+                Ok((k, RedisValue::String(v)))
+            }/*
             0x01 => {
                 // 列表
+                let k = self.read_string().await?;
                 let len = self.read_length().await?;
                 let mut list = Vec::with_capacity(len as usize);
                 for _ in 0..len {
                     list.push(self.read_string().await?);
                 }
-                Ok(RedisValue::List(list))
+                Ok((k, RedisValue::List(list)))
             }
             0x02 => {
                 // 哈希
@@ -468,7 +477,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                     sorted_set.push((element, score));
                 }
                 Ok(RedisValue::SortedSet(sorted_set))
-            }
+            }*/
             // 其他类型的解析实现...
             _ => anyhow::bail!("Unsupported value type: {}", value_type),
         }
@@ -569,6 +578,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
     // 辅助读取方法，同时更新CRC
     async fn read_bytes(&mut self, buf: &mut [u8]) -> Result<usize> {
         let bytes_read = self.reader.read(buf).await?;
+        log::debug!("bytes read is {:02x?}", &buf[..bytes_read]);
         self.crc.write(&buf[0..bytes_read]);
         Ok(bytes_read)
     }
@@ -603,8 +613,9 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
 
     // 读取有符号整数，同时更新CRC
     async fn read_i8(&mut self) -> Result<i8> {
-        let byte = self.read_u8().await?;
-        Ok(byte as i8)
+        let byte = self.reader.read_i8().await?;
+        self.crc.write(&[byte as u8]);
+        Ok(byte)
     }
 
     // 读取有符号短整数，同时更新CRC
@@ -633,6 +644,11 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
         let current_pos = self.reader.seek(SeekFrom::Current(0)).await?;
         let byte = self.reader.read_u8().await?;
         self.reader.seek(SeekFrom::Start(current_pos)).await?;
+        Ok(byte)
+    }
+    // 读取一个u8,但不加入crc校验
+    async fn pass_u8(&mut self) -> Result<u8> {
+        let byte = self.reader.read_u8().await?;
         Ok(byte)
     }
 }
