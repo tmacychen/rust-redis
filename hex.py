@@ -8,4 +8,4 @@ binary_data = bytes.fromhex(hex_data)
 with open("dump.rdb", "wb") as file:
     file.write(binary_data)
 
-print("文件已成功写入为 output.dat")
+print("i don't know why crc failed!")
