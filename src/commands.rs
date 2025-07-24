@@ -21,7 +21,7 @@ pub struct Keys<'a>(&'a [&'a [u8]], &'a RdbFile);
 
 impl Ping {
     fn exec(&self) -> Result<Vec<u8>> {
-        Ok(BulkString::new(b"PONG").bytes().to_vec())
+        Ok(SimpleString::new(b"PONG").bytes().to_vec())
     }
 }
 impl Echo {
