@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::Arc};
 
 use crate::db::{self, Dbconf, RdbFile, RdbParser, RDB_VERSION};
 use anyhow::{bail, Result};
@@ -8,6 +8,7 @@ use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
+    sync::Mutex,
 };
 
 use crate::commands;
@@ -15,7 +16,7 @@ const BUF_SIZE: usize = 100;
 
 #[derive(Clone)]
 pub struct Server {
-    pub storage: RdbFile,
+    pub storage: Arc<Mutex<RdbFile>>,
     pub db_conf: Dbconf,
 }
 
@@ -35,12 +36,14 @@ impl Server {
         if file_path.is_file() {
             let mut rdbfile_reader = RdbParser::new(File::open(file_path.as_path()).await?);
             server = Server {
-                storage: rdbfile_reader.parse().await.expect("rdb_file parse error"),
+                storage: Arc::new(Mutex::new(
+                    rdbfile_reader.parse().await.expect("rdb_file parse error"),
+                )),
                 db_conf: db_conf,
             };
         } else {
             server = Server {
-                storage: RdbFile::new(RDB_VERSION),
+                storage: Arc::new(Mutex::new(RdbFile::new(RDB_VERSION))),
                 db_conf: db_conf,
             };
         }
@@ -52,7 +55,7 @@ impl Server {
         log::info!("server init executed !!");
     }
 
-    pub async fn handle_client(&mut self, mut stream: TcpStream) -> Result<()> {
+    pub async fn handle_client(&self, mut stream: TcpStream) -> Result<()> {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
         loop {
             let n = stream.read(&mut buf).await?;

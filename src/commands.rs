@@ -1,11 +1,13 @@
-use std::time;
+use std::{sync::Arc, time};
 
 use crate::{
     db::{Dbconf, Expiry, KeyValue, RdbFile, RedisValue, DB_NUM},
     server::Server,
 };
 use anyhow::{bail, Result};
+use log::error;
 use resp_protocol::{ArrayBuilder, BulkString, Error, RespType, SimpleString, NULL_BULK_STRING};
+use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
 pub struct Ping;
@@ -13,11 +15,11 @@ pub struct Ping;
 #[derive(Clone, Debug)]
 pub struct Echo(BulkString);
 
-pub struct Get<'a>(String, &'a mut RdbFile);
+pub struct Get<'a>(String, &'a Server);
 
-pub struct Set<'a>(String, KeyValue, &'a mut RdbFile);
+pub struct Set<'a>(String, KeyValue, &'a Server);
 
-pub struct Keys<'a>(&'a [&'a [u8]], &'a RdbFile);
+pub struct Keys<'a>(&'a [&'a [u8]], Arc<Mutex<RdbFile>>);
 
 impl Ping {
     fn exec(&self) -> Result<Vec<u8>> {
@@ -31,7 +33,7 @@ impl Echo {
 }
 impl Get<'_> {
     async fn exec<'a>(&'a mut self) -> Result<Vec<u8>> {
-        let db: &mut RdbFile = self.1;
+        let mut db = self.1.storage.lock().await;
 
         if let Some(value) = db.get(DB_NUM, &self.0).await {
             match value.expiry {
@@ -85,6 +87,9 @@ fn get_value_from_redis_type(v: &RedisValue) -> Result<Vec<u8>> {
 impl Set<'_> {
     async fn exec(&mut self) -> Result<Vec<u8>> {
         self.2
+            .storage
+            .lock()
+            .await
             .insert(
                 DB_NUM,
                 self.0.clone(),
@@ -96,7 +101,7 @@ impl Set<'_> {
     }
 }
 impl<'a> Keys<'a> {
-    pub fn new(cmd: &'a [&[u8]], rdb_file: &'a RdbFile) -> Self {
+    pub fn new(cmd: &'a [&[u8]], rdb_file: Arc<Mutex<RdbFile>>) -> Self {
         Keys(cmd, rdb_file)
     }
     async fn exec(&mut self) -> Result<Vec<u8>> {
@@ -114,7 +119,7 @@ impl<'a> Keys<'a> {
             );
             Ok(NULL_BULK_STRING.bytes().to_vec())
         } else {
-            if let Some(keys) = self.1.keys(DB_NUM).await {
+            if let Some(keys) = self.1.lock().await.keys(DB_NUM).await {
                 for k in keys {
                     ret_array.insert(RespType::BulkString(BulkString::new(k.as_bytes())));
                 }
@@ -177,7 +182,7 @@ impl<'a> Config<'a> {
     }
 }
 
-pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &mut Server) -> Result<Vec<u8>> {
+pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Result<Vec<u8>> {
     log::debug!("get s:{:?}", s);
     match s[1].to_ascii_lowercase().as_slice() {
         b"ping" => crate::commands::Ping.exec(),
@@ -216,7 +221,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &mut Server) -
             }
             crate::commands::Get(
                 String::from_utf8(s[3].to_vec()).expect("convert get arg to string"),
-                &mut server.storage,
+                &server,
             )
             .exec()
             .await
@@ -231,7 +236,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &mut Server) -
                         ),
                         expiry: None,
                     },
-                    &mut server.storage,
+                    &server,
                 )
                 .exec()
                 .await
@@ -257,7 +262,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &mut Server) -
                                     time::Instant::now(),
                                 )),
                             },
-                            &mut server.storage,
+                            &server,
                         )
                         .exec()
                         .await
@@ -275,7 +280,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &mut Server) -
                                     time::Instant::now(),
                                 )),
                             },
-                            &mut server.storage,
+                            &server,
                         )
                         .exec()
                         .await
@@ -283,10 +288,13 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &mut Server) -
                     _ => bail!("expirty arg is error"),
                 }
             }
-            _ => bail!("set arg is error"),
+            _ => {
+                error!("set arg is error");
+                Ok(BulkString::new(b"-1").bytes().to_vec())
+            }
         },
         b"config" => Config::new(&s[2..], &server.db_conf).exec(),
-        b"keys" => Keys::new(&s[2..], &server.storage).exec().await,
+        b"keys" => Keys::new(&s[2..], Arc::clone(&server.storage)).exec().await,
 
         _ => bail!("cmd parse error"),
     }

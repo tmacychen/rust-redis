@@ -47,18 +47,18 @@ async fn main() -> Result<()> {
         db_conf.set(args.dir.clone(), args.dbfilename.clone());
     }
 
-    let server_arc = Arc::new(Mutex::new(
+    let server_arc = Arc::new(
         server::Server::new(db_conf)
             .await
             .expect("create server error"),
-    ));
+    );
     loop {
         let stream = listener.accept().await;
         match stream {
             Ok((stream, _)) => {
                 let server_clone = Arc::clone(&server_arc);
                 tokio::spawn(async move {
-                    if let Err(e) = server_clone.lock().await.handle_client(stream).await {
+                    if let Err(e) = server_clone.handle_client(stream).await {
                         error!("handle client error :{}", e);
                     }
                 })
