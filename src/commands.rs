@@ -42,12 +42,12 @@ impl Get<'_> {
             match value.expiry {
                 Some(exp_t) => match exp_t {
                     Expiry::Milliseconds(t) => {
-                        log::debug!(
-                            "timestamp:{:?} ms vs time now :{:?} ms",
-                            UNIX_EPOCH + Duration::from_millis(t),
-                            SystemTime::now()
-                        );
-                        if UNIX_EPOCH + Duration::from_millis(t) < SystemTime::now() {
+                        let now_millis = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .expect("now time get error")
+                            .as_millis();
+                        log::debug!("timestamp:{:?} ms vs time now :{:?} ms", t, now_millis);
+                        if (t as u128) < now_millis {
                             log::debug!("delete a key {}", db.delete(0, &self.0).await);
                             Ok(NULL_BULK_STRING.bytes().to_vec())
                         } else {
@@ -55,12 +55,12 @@ impl Get<'_> {
                         }
                     }
                     Expiry::Seconds(t) => {
-                        log::debug!(
-                            "timestamp:{:?} s vs time now :{:?} s",
-                            UNIX_EPOCH + Duration::from_secs(t as u64),
-                            SystemTime::now()
-                        );
-                        if UNIX_EPOCH + Duration::from_secs(t as u64) < SystemTime::now() {
+                        let now_secs = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .expect("now time get error")
+                            .as_secs();
+                        log::debug!("timestamp:{:?} ms vs time now :{:?} ms", t, now_secs);
+                        if (t as u64) < now_secs {
                             log::debug!("delete a key {}", db.delete(0, &self.0).await);
                             Ok(NULL_BULK_STRING.bytes().to_vec())
                         } else {
