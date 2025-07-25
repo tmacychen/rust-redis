@@ -1,5 +1,4 @@
 use dashmap::DashMap;
-use log::info;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Default)]
@@ -43,7 +42,7 @@ pub const DB_NUM: u64 = 0;
 
 // RDB文件中的数据类型
 #[derive(Debug, Clone, PartialEq)]
-pub enum RDB_V_Type {
+pub enum RdbVType {
     String,
     List,
     Set,
@@ -146,6 +145,13 @@ impl RdbFile {
         }
     }
 
+    pub fn set_capacity(&mut self, size: usize) -> Result<()> {
+        self.databases
+            .try_reserve(size)
+            .expect("try to set capacity error ");
+        Ok(())
+    }
+
     // 设置辅助字段
     pub fn set_aux(&mut self, key: String, value: String) {
         self.aux_fields.insert(key, value);
@@ -225,7 +231,7 @@ impl RdbFile {
     }
 }
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use crc64fast::Digest;
 use tokio::io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
@@ -261,7 +267,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
         let version_str = String::from_utf8_lossy(&version_bytes);
         let version = version_str.parse::<u32>()?;
 
-        let rdb_file = RdbFile::new(version);
+        let mut rdb_file = RdbFile::new(version);
         let mut current_db = DB_NUM;
 
         'outer: loop {
@@ -282,12 +288,13 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                         .databases
                         .entry(current_db)
                         .or_insert(DashMap::new());
-
+                    let mut _expires_size: u64 = 0;
                     // 检查是否有RESIZEDB字段
                     if TYPE_RESIZEDB == self.peek_u8().await? {
                         self.read_u8().await?; // 消耗掉0xFB
-                        let _ht_size = self.read_length().await?;
-                        let _expires_size = self.read_length().await?;
+                        let hashmap_size = self.read_length().await?;
+                        _expires_size = self.read_length().await?;
+                        rdb_file.set_capacity(hashmap_size as usize)?;
                     }
                     // 解析该数据库中的所有键值对
                     let mut key: String = "".to_string();
@@ -301,13 +308,15 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                         let byte = self.peek_u8().await?;
                         match byte {
                             TYPE_EXPIRETIME | TYPE_EXPIRETIME_MS => {
-                                // 处理带过期时间的键值对
-                                let expiry = match byte {
-                                    0xFD => Expiry::Seconds(self.read_u32::<LittleEndian>().await?),
-                                    0xFC => {
+                                // 处理带过期时间的键值对,读取过期时间
+                                let expiry = match self.read_u8().await? {
+                                    TYPE_EXPIRETIME => {
+                                        Expiry::Seconds(self.read_u32::<LittleEndian>().await?)
+                                    }
+                                    TYPE_EXPIRETIME_MS => {
                                         Expiry::Milliseconds(self.read_u64::<LittleEndian>().await?)
                                     }
-                                    _ => unreachable!(),
+                                    _ => bail!("unknown expire time type!"),
                                 };
                                 let value_type = self.read_u8().await?;
                                 let (key_1, value) = self.parse_value(value_type).await?;

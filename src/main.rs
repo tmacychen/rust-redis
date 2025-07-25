@@ -1,13 +1,10 @@
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
 
 use anyhow::Result;
 use std::sync::Arc;
 use tklog::{error, info, Format, LEVEL, LOG};
 
 use clap::Parser;
-
-use crate::db::{RdbFile, RDB_VERSION};
 
 mod commands;
 mod db;
