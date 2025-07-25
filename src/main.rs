@@ -19,6 +19,10 @@ struct Args {
     // db saved file name
     #[arg(long, default_value = "")]
     dbfilename: String,
+
+    // server port
+    #[arg(long, default_value = "6379")]
+    port: String,
 }
 
 #[tokio::main]
@@ -36,7 +40,8 @@ async fn main() -> Result<()> {
     // for args
     let args = Args::parse();
 
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+    let url = format!("127.0.0.1:{}", args.port);
+    let listener = TcpListener::bind(url).await.unwrap();
 
     // create a db in memory
     let mut db_conf = db::Dbconf::new();
