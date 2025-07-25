@@ -40,13 +40,12 @@ impl Get<'_> {
                 Some((exp_t, instant_time)) => match exp_t {
                     Expiry::Milliseconds(t) => {
                         log::debug!(
-                            "exp_t:{},t.elapsed:{}",
+                            "exp_t:{} ms ,t.elapsed:{} ms",
                             t,
                             instant_time.elapsed().as_millis()
                         );
                         if t < instant_time.elapsed().as_millis() as u64 {
                             log::debug!("delete a key {}", db.delete(0, &self.0).await);
-
                             Ok(NULL_BULK_STRING.bytes().to_vec())
                         } else {
                             get_value_from_redis_type(&value.value)
@@ -54,9 +53,9 @@ impl Get<'_> {
                     }
                     Expiry::Seconds(t) => {
                         log::debug!(
-                            "exp_t:{},t.elapsed:{}",
+                            "exp_t:{} s,t.elapsed:{} s",
                             t,
-                            instant_time.elapsed().as_millis()
+                            instant_time.elapsed().as_secs()
                         );
                         if t < instant_time.elapsed().as_secs() as u32 {
                             log::debug!("delete a key {}", db.delete(0, &self.0).await);

@@ -268,6 +268,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
         let version = version_str.parse::<u32>()?;
 
         let mut rdb_file = RdbFile::new(version);
+        #[allow(unused_assignments)]
         let mut current_db = DB_NUM;
 
         'outer: loop {
@@ -297,6 +298,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                         rdb_file.set_capacity(hashmap_size as usize)?;
                     }
                     // 解析该数据库中的所有键值对
+                    #[allow(unused_assignments)]
                     let mut key: String = "".to_string();
                     let mut key_value: KeyValue = KeyValue {
                         value: RedisValue::String("".to_string()),
