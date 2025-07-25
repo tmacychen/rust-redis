@@ -69,7 +69,7 @@ pub enum Expiry {
 pub struct KeyValue {
     // pub key: String,
     pub value: RedisValue,
-    pub expiry: Option<(Expiry)>,
+    pub expiry: Option<Expiry>,
 }
 
 // Redis支持的数据结构
@@ -151,11 +151,6 @@ impl RdbFile {
         Ok(())
     }
 
-    // 设置辅助字段
-    pub fn set_aux(&mut self, key: String, value: String) {
-        self.aux_fields.insert(key, value);
-    }
-
     // 异步获取指定数据库中的键值对
     pub async fn get(&self, db: u64, key: &str) -> Option<KeyValue> {
         log::debug!("database is {:?} db_num is {}", self.databases, db);
@@ -175,7 +170,7 @@ impl RdbFile {
         db: u64,
         key: String,
         value: RedisValue,
-        expiry: Option<(Expiry)>,
+        expiry: Option<Expiry>,
     ) {
         self.databases
             .entry(db)
@@ -231,9 +226,9 @@ impl RdbFile {
 }
 
 use anyhow::{bail, Context, Result};
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
+use byteorder::{BigEndian, LittleEndian};
 use crc64fast::Digest;
-use tokio::io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 // RDB文件异步解析器
 pub struct RdbParser<R: AsyncReadExt + AsyncSeekExt + Unpin> {
@@ -299,6 +294,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
                     // 解析该数据库中的所有键值对
                     #[allow(unused_assignments)]
                     let mut key: String = "".to_string();
+                    #[allow(unused_assignments)]
                     let mut key_value: KeyValue = KeyValue {
                         value: RedisValue::String("".to_string()),
                         expiry: None,
@@ -325,7 +321,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
 
                                 key_value = KeyValue {
                                     value,
-                                    expiry: Some((expiry)),
+                                    expiry: Some(expiry),
                                 };
                             }
                             TYPE_SELECTDB => {
@@ -711,7 +707,7 @@ impl<W: AsyncWriteExt + AsyncSeekExt + Unpin> RdbWriter<W> {
             for e in db_map.iter() {
                 let key = e.key();
                 let kv = e.value();
-                if let Some((expiry, _timestamp)) = &kv.expiry {
+                if let Some(expiry) = &kv.expiry {
                     match expiry {
                         Expiry::Seconds(secs) => {
                             self.write_u8(0xFD).await?;
