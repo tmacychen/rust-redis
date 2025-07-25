@@ -246,7 +246,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
             5 => {
                 let time_num = String::from_utf8(s[9].to_vec())
                     .expect("conver time to str ")
-                    .parse()
+                    .parse::<u64>()
                     .expect("parse time num error");
                 log::debug!(" set time is {}", time_num);
 
@@ -259,7 +259,13 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
                                     String::from_utf8(s[5].to_vec())
                                         .expect("convert get arg to string"),
                                 ),
-                                expiry: Some(Expiry::Milliseconds(time_num)),
+                                expiry: Some(Expiry::Milliseconds(
+                                    SystemTime::now()
+                                        .duration_since(UNIX_EPOCH)
+                                        .expect("get now timestamp error")
+                                        .as_millis() as u64
+                                        + time_num,
+                                )),
                             },
                             &server,
                         )
@@ -274,7 +280,13 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
                                     String::from_utf8(s[5].to_vec())
                                         .expect("convert get arg to string"),
                                 ),
-                                expiry: Some(Expiry::Seconds(time_num as u32)),
+                                expiry: Some(Expiry::Seconds(
+                                    (SystemTime::now()
+                                        .duration_since(UNIX_EPOCH)
+                                        .expect("get now timestamp error")
+                                        .as_secs()
+                                        + time_num) as u32,
+                                )),
                             },
                             &server,
                         )
