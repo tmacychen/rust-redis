@@ -1,5 +1,4 @@
 use dashmap::DashMap;
-use std::time::Instant;
 
 #[derive(Debug, Clone, Default)]
 pub struct Dbconf {
@@ -70,7 +69,7 @@ pub enum Expiry {
 pub struct KeyValue {
     // pub key: String,
     pub value: RedisValue,
-    pub expiry: Option<(Expiry, Instant)>,
+    pub expiry: Option<(Expiry)>,
 }
 
 // Redis支持的数据结构
@@ -176,7 +175,7 @@ impl RdbFile {
         db: u64,
         key: String,
         value: RedisValue,
-        expiry: Option<(Expiry, Instant)>,
+        expiry: Option<(Expiry)>,
     ) {
         self.databases
             .entry(db)
@@ -326,7 +325,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
 
                                 key_value = KeyValue {
                                     value,
-                                    expiry: Some((expiry, Instant::now())),
+                                    expiry: Some((expiry)),
                                 };
                             }
                             TYPE_SELECTDB => {

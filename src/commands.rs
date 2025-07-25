@@ -1,4 +1,7 @@
-use std::{sync::Arc, time};
+use std::{
+    sync::Arc,
+    time::{self, Duration, SystemTime, UNIX_EPOCH},
+};
 
 use crate::{
     db::{Dbconf, Expiry, KeyValue, RdbFile, RedisValue, DB_NUM},
@@ -37,14 +40,14 @@ impl Get<'_> {
 
         if let Some(value) = db.get(DB_NUM, &self.0).await {
             match value.expiry {
-                Some((exp_t, instant_time)) => match exp_t {
+                Some(exp_t) => match exp_t {
                     Expiry::Milliseconds(t) => {
                         log::debug!(
-                            "exp_t:{} ms ,t.elapsed:{} ms",
-                            t,
-                            instant_time.elapsed().as_millis()
+                            "timestamp:{:?} ms vs time now :{:?} ms",
+                            UNIX_EPOCH + Duration::from_millis(t),
+                            SystemTime::now()
                         );
-                        if t < instant_time.elapsed().as_millis() as u64 {
+                        if UNIX_EPOCH + Duration::from_millis(t) < SystemTime::now() {
                             log::debug!("delete a key {}", db.delete(0, &self.0).await);
                             Ok(NULL_BULK_STRING.bytes().to_vec())
                         } else {
@@ -53,11 +56,11 @@ impl Get<'_> {
                     }
                     Expiry::Seconds(t) => {
                         log::debug!(
-                            "exp_t:{} s,t.elapsed:{} s",
-                            t,
-                            instant_time.elapsed().as_secs()
+                            "timestamp:{:?} s vs time now :{:?} s",
+                            UNIX_EPOCH + Duration::from_secs(t as u64),
+                            SystemTime::now()
                         );
-                        if t < instant_time.elapsed().as_secs() as u32 {
+                        if UNIX_EPOCH + Duration::from_secs(t as u64) < SystemTime::now() {
                             log::debug!("delete a key {}", db.delete(0, &self.0).await);
                             Ok(NULL_BULK_STRING.bytes().to_vec())
                         } else {
@@ -256,10 +259,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
                                     String::from_utf8(s[5].to_vec())
                                         .expect("convert get arg to string"),
                                 ),
-                                expiry: Some((
-                                    Expiry::Milliseconds(time_num),
-                                    time::Instant::now(),
-                                )),
+                                expiry: Some(Expiry::Milliseconds(time_num)),
                             },
                             &server,
                         )
@@ -274,10 +274,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
                                     String::from_utf8(s[5].to_vec())
                                         .expect("convert get arg to string"),
                                 ),
-                                expiry: Some((
-                                    Expiry::Seconds(time_num as u32),
-                                    time::Instant::now(),
-                                )),
+                                expiry: Some(Expiry::Seconds(time_num as u32)),
                             },
                             &server,
                         )
