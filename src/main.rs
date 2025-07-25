@@ -21,7 +21,7 @@ struct Args {
     dbfilename: String,
 
     // server port
-    #[arg(long, default_value = "6379")]
+    #[arg(short, long, default_value = "6379")]
     port: String,
 }
 

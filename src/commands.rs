@@ -1,6 +1,6 @@
 use std::{
     sync::Arc,
-    time::{self, Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
@@ -127,14 +127,7 @@ impl<'a> Keys<'a> {
                 }
                 Ok(ret_array.build().bytes().to_vec())
             } else {
-                // Ok(ArrayBuilder::new()
-                //     .insert(RespType::SimpleString(SimpleString::new(b"-1")))
-                //     .build()
-                //     .bytes()
-                //     .to_vec())
-                // Ok(ArrayBuilder::new)
                 Ok(BulkString::new(b"-1").bytes().to_vec())
-                // Ok(NULL_BULK_STRING.bytes().to_vec())
             }
         }
     }
