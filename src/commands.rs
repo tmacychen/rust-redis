@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     db::{Dbconf, Expiry, KeyValue, RdbFile, RedisValue, DB_NUM},
+    replication::Replication,
     server::Server,
 };
 use anyhow::{bail, Result};
@@ -177,6 +178,34 @@ impl<'a> Config<'a> {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct Info {
+    key: Option<String>,
+    rep: Arc<Mutex<Replication>>,
+}
+
+impl Info {
+    pub fn new(k: Option<String>, rep: Arc<Mutex<Replication>>) -> Self {
+        Info { key: k, rep: rep }
+    }
+
+    async fn exec(&self) -> Result<Vec<u8>> {
+        match &self.key {
+            Some(k) => match self.rep.lock().await.get(&k) {
+                Some(v) => Ok(BulkString::new(format!("{}:{}", k, v).as_bytes())
+                    .bytes()
+                    .to_vec()),
+                None => Ok(NULL_BULK_STRING.bytes().to_vec()),
+            },
+            //inter for all keys
+            None => Ok(
+                BulkString::new(format!("{}:{}", "role", "master").as_bytes())
+                    .bytes()
+                    .to_vec(),
+            ),
+        }
+    }
+}
 pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Result<Vec<u8>> {
     log::debug!("get s:{:?}", s);
     match s[1].to_ascii_lowercase().as_slice() {
@@ -296,6 +325,18 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
         },
         b"config" => Config::new(&s[2..], &server.db_conf).exec(),
         b"keys" => Keys::new(&s[2..], Arc::clone(&server.storage)).exec().await,
+        b"info" => match arg_len {
+            2 => Info::new(None, Arc::clone(&server.rep)).exec().await,
+            3 => {
+                Info::new(
+                    Some(String::from_utf8_lossy(&s[2]).to_uppercase()),
+                    Arc::clone(&server.rep),
+                )
+                .exec()
+                .await
+            }
+            _ => bail!("info args number error!"),
+        },
 
         _ => bail!("cmd parse error"),
     }

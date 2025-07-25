@@ -8,6 +8,7 @@ use clap::Parser;
 
 mod commands;
 mod db;
+mod replication;
 mod server;
 
 #[derive(Parser, Debug)]

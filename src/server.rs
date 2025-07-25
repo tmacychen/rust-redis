@@ -1,6 +1,9 @@
 use std::{fs, path::PathBuf, sync::Arc};
 
-use crate::db::{self, Dbconf, RdbFile, RdbParser, RDB_VERSION};
+use crate::{
+    db::{self, Dbconf, RdbFile, RdbParser, RDB_VERSION},
+    replication::Replication,
+};
 use anyhow::{bail, Result};
 use resp_protocol::Array;
 use tklog::info;
@@ -18,6 +21,7 @@ const BUF_SIZE: usize = 100;
 pub struct Server {
     pub storage: Arc<Mutex<RdbFile>>,
     pub db_conf: Dbconf,
+    pub rep: Arc<Mutex<Replication>>,
 }
 
 impl Server {
@@ -40,11 +44,13 @@ impl Server {
                     rdbfile_reader.parse().await.expect("rdb_file parse error"),
                 )),
                 db_conf: db_conf,
+                rep: Arc::new(Mutex::new(Replication::new())),
             };
         } else {
             server = Server {
                 storage: Arc::new(Mutex::new(RdbFile::new(RDB_VERSION))),
                 db_conf: db_conf,
+                rep: Arc::new(Mutex::new(Replication::new())),
             };
         }
 
