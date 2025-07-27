@@ -198,11 +198,18 @@ impl Info {
                 None => Ok(NULL_BULK_STRING.bytes().to_vec()),
             },
             //inter for all keys
-            None => Ok(
-                BulkString::new(format!("{}:{}", "role", "master").as_bytes())
-                    .bytes()
-                    .to_vec(),
-            ),
+            None => {
+                let mut all = ArrayBuilder::new();
+                for (k, v) in self.rep.lock().await.get_all() {
+                    all.insert(RespType::BulkString(BulkString::new(
+                        format!("{}:{}", k, v).as_bytes(),
+                    )));
+                }
+                // BulkString::new(format!("{}:{}", "role", "master").as_bytes())
+                //     .bytes()
+                //     .to_vec(),
+                Ok(all.build().to_vec())
+            }
         }
     }
 }

@@ -40,7 +40,10 @@ impl Replication {
         }
     }
     pub fn get_all(&self) -> Vec<(String, String)> {
-        let ret = Vec::new();
+        let mut ret = Vec::new();
+        self.info
+            .iter()
+            .for_each(|e| ret.push((e.key().clone(), e.value().clone())));
         ret
     }
 }
