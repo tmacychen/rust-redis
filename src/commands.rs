@@ -199,16 +199,19 @@ impl Info {
             },
             //inter for all keys
             None => {
-                let mut all = ArrayBuilder::new();
+                let mut all = String::new();
+                // let mut all = arraybuilder::new();
                 for (k, v) in self.rep.lock().await.get_all() {
-                    all.insert(RespType::BulkString(BulkString::new(
-                        format!("{}:{}", k, v).as_bytes(),
-                    )));
+                    all.push_str(format!("{}:{}\r\n", k, v).as_str());
                 }
+                //     all.insert(resptype::bulkstring(bulkstring::new(
+                //         format!("{}:{}", k, v).as_bytes(),
+                //     )));
+                // }
                 // BulkString::new(format!("{}:{}", "role", "master").as_bytes())
                 //     .bytes()
                 //     .to_vec(),
-                Ok(all.build().to_vec())
+                Ok(BulkString::new(all.as_bytes()).bytes().to_vec())
             }
         }
     }
