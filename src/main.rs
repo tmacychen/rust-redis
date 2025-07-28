@@ -1,10 +1,12 @@
 use tokio::net::TcpListener;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::sync::Arc;
 use tklog::{error, info, Format, LEVEL, LOG};
 
 use clap::Parser;
+
+use crate::server::ServerOpt;
 
 mod commands;
 mod db;
@@ -24,6 +26,10 @@ struct Args {
     // server port
     #[arg(short, long, default_value = "6379")]
     port: String,
+
+    // start a slave replication for the master
+    #[arg(short, long, default_value = "")]
+    replicaof: String,
 }
 
 #[tokio::main]
@@ -50,8 +56,19 @@ async fn main() -> Result<()> {
         db_conf.set(args.dir.clone(), args.dbfilename.clone());
     }
 
+    let rep = args.replicaof.clone();
+    let port = rep.split_whitespace().last();
+    if port.is_some_and(|p| p.parse::<u32>().is_err()) {
+        bail!(" replicaof args need  to contain a correct port number !!")
+    }
+
+    let s_opt = ServerOpt {
+        db_conf: db_conf,
+        replicaof: rep,
+    };
+
     let server_arc = Arc::new(
-        server::Server::new(db_conf)
+        server::Server::new(s_opt)
             .await
             .expect("create server error"),
     );

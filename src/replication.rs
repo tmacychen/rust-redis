@@ -10,17 +10,6 @@
 use dashmap::DashMap;
 
 #[derive(Clone, Debug)]
-pub enum InfoType {
-    String(String),
-    I64(i64),
-}
-
-// #[derive(Clone, Debug)]
-// pub struct Replication {
-//     info: DashMap<String, InfoType>,
-// }
-
-#[derive(Clone, Debug)]
 pub struct Replication {
     info: DashMap<String, String>,
 }

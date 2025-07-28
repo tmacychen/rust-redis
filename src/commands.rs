@@ -179,23 +179,31 @@ impl<'a> Config<'a> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Info {
+pub struct Info<'a> {
     key: Option<String>,
-    rep: Arc<Mutex<Replication>>,
+    server: &'a Server,
 }
 
-impl Info {
-    pub fn new(k: Option<String>, rep: Arc<Mutex<Replication>>) -> Self {
-        Info { key: k, rep: rep }
+impl<'a> Info<'a> {
+    pub fn new(k: Option<String>, server: &'a Server) -> Self {
+        Info {
+            key: k,
+            server: server,
+        }
     }
 
     async fn exec(&self) -> Result<Vec<u8>> {
         match &self.key {
-            Some(k) => match self.rep.lock().await.get(&k) {
-                Some(v) => Ok(BulkString::new(format!("{}:{}", k, v).as_bytes())
-                    .bytes()
-                    .to_vec()),
-                None => Ok(NULL_BULK_STRING.bytes().to_vec()),
+            Some(k) => {
+
+                let v_hashmap = self.server.get_info(k).await ;
+                //TODO
+                v_hashmap.iter().for_each(|e|e.key();)                    
+                
+                // Some(v) => Ok(BulkString::new(format!("{}:{}", k, v).as_bytes())
+                //     .bytes()
+                //     .to_vec()),
+                // None => Ok(NULL_BULK_STRING.bytes().to_vec()),
             },
             //inter for all keys
             None => {
@@ -204,13 +212,6 @@ impl Info {
                 for (k, v) in self.rep.lock().await.get_all() {
                     all.push_str(format!("{}:{}\r\n", k, v).as_str());
                 }
-                //     all.insert(resptype::bulkstring(bulkstring::new(
-                //         format!("{}:{}", k, v).as_bytes(),
-                //     )));
-                // }
-                // BulkString::new(format!("{}:{}", "role", "master").as_bytes())
-                //     .bytes()
-                //     .to_vec(),
                 Ok(BulkString::new(all.as_bytes()).bytes().to_vec())
             }
         }
@@ -336,14 +337,11 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
         b"config" => Config::new(&s[2..], &server.db_conf).exec(),
         b"keys" => Keys::new(&s[2..], Arc::clone(&server.storage)).exec().await,
         b"info" => match arg_len {
-            2 => Info::new(None, Arc::clone(&server.rep)).exec().await,
+            2 => Info::new(None, &server).exec().await,
             3 => {
-                Info::new(
-                    Some(String::from_utf8_lossy(&s[2]).to_uppercase()),
-                    Arc::clone(&server.rep),
-                )
-                .exec()
-                .await
+                Info::new(Some(String::from_utf8_lossy(&s[2]).to_uppercase()), &server)
+                    .exec()
+                    .await
             }
             _ => bail!("info args number error!"),
         },

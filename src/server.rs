@@ -5,6 +5,7 @@ use crate::{
     replication::Replication,
 };
 use anyhow::{bail, Result};
+use dashmap::DashMap;
 use resp_protocol::Array;
 use tklog::info;
 use tokio::{
@@ -17,24 +18,40 @@ use tokio::{
 use crate::commands;
 const BUF_SIZE: usize = 100;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
+
+pub struct ServerOpt {
+    pub db_conf: Dbconf,
+    pub replicaof: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct Server {
     pub storage: Arc<Mutex<RdbFile>>,
-    pub db_conf: Dbconf,
+    pub option: ServerOpt,
     pub rep: Arc<Mutex<Replication>>,
+    info: Arc<Mutex<DashMap<String, DashMap<String, String>>>>,
 }
 
 impl Server {
-    pub async fn new(db_conf: db::Dbconf) -> Result<Self> {
+    pub async fn new(conf: ServerOpt) -> Result<Self> {
         let mut server: Server;
 
-        let mut file_path = PathBuf::from(db_conf.get_dir());
-        if db_conf.get_dir() != "" && !file_path.exists() {
+        let mut file_path = PathBuf::from(conf.db_conf.get_dir());
+        if conf.db_conf.get_dir() != "" && !file_path.exists() {
             fs::create_dir(file_path.as_path()).expect("creat redis dir error");
         }
-        if db_conf.get_db_filename() != "" {
-            file_path.push(db_conf.get_db_filename());
+        if conf.db_conf.get_db_filename() != "" {
+            file_path.push(conf.db_conf.get_db_filename());
         }
+
+        let ser_info: DashMap<String, DashMap<String, String>> = DashMap::new();
+
+        let rep: Vec<&str> = conf.replicaof.split_whitespace().collect();
+        let rep_v = DashMap::new();
+        rep_v.insert(rep[0].to_string(), rep[1].to_string());
+
+        ser_info.insert("replication".to_string(), rep_v);
 
         //if file
         if file_path.is_file() {
@@ -43,22 +60,35 @@ impl Server {
                 storage: Arc::new(Mutex::new(
                     rdbfile_reader.parse().await.expect("rdb_file parse error"),
                 )),
-                db_conf: db_conf,
+                option: conf,
                 rep: Arc::new(Mutex::new(Replication::new())),
+                info: Arc::new(Mutex::new(ser_info)),
             };
         } else {
             server = Server {
                 storage: Arc::new(Mutex::new(RdbFile::new(RDB_VERSION))),
-                db_conf: db_conf,
+                option: conf,
                 rep: Arc::new(Mutex::new(Replication::new())),
+                info: Arc::new(Mutex::new(ser_info)),
             };
         }
-
         server.init().await;
+
         Ok(server)
     }
     pub async fn init(&mut self) {
-        log::info!("server init executed !!");
+        let mut info = self.info.lock().await;
+
+        log::info!("server init has finished!!");
+    }
+    pub async fn get_info(&self, k: &str) -> DashMap<String, String> {
+        self.info
+            .lock()
+            .await
+            .get(k)
+            .expect("get server info error")
+            // .value()
+            .clone()
     }
 
     pub async fn handle_client(&self, mut stream: TcpStream) -> Result<()> {
