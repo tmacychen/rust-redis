@@ -1,13 +1,15 @@
 use std::{fs, path::PathBuf, sync::Arc};
 
 use crate::{
-    db::{self, Dbconf, RdbFile, RdbParser, RDB_VERSION},
-    replication::Replication,
+    db::{Dbconf, RdbFile, RdbParser, RDB_VERSION},
+    replication::ReplicationSet,
 };
 use anyhow::{bail, Result};
+use bytes::Bytes;
 use dashmap::DashMap;
-use rand::{distr::Alphabetic, rngs::ThreadRng, thread_rng, Rng};
-use resp_protocol::Array;
+use rand::rng;
+use rand::{distr::Alphabetic, Rng};
+use resp_protocol::{Array, SimpleString};
 use tklog::info;
 use tokio::{
     fs::File,
@@ -25,11 +27,12 @@ pub struct ServerOpt {
     pub replicaof: Option<(String, String)>,
     master_replid: String,
     master_repl_offset: u32,
+    pub(crate) is_master: bool,
 }
 
 impl ServerOpt {
-    pub fn new(db_conf: Dbconf, replicaof: Option<(String, String)>) -> Self {
-        let replid = thread_rng()
+    pub fn new(db_conf: Dbconf, replicaof: Option<(String, String)>, is_master: bool) -> Self {
+        let replid = rng()
             .sample_iter(&Alphabetic)
             .map(char::from)
             .take(40)
@@ -39,6 +42,7 @@ impl ServerOpt {
             replicaof: replicaof,
             master_replid: replid,
             master_repl_offset: 0,
+            is_master,
         }
     }
 }
@@ -47,7 +51,7 @@ impl ServerOpt {
 pub struct Server {
     pub storage: Arc<Mutex<RdbFile>>,
     pub option: ServerOpt,
-    pub rep: Arc<Mutex<Replication>>,
+    pub repl_set: Arc<Mutex<ReplicationSet>>,
     info: Arc<Mutex<DashMap<String, DashMap<String, String>>>>,
 }
 
@@ -81,30 +85,37 @@ impl Server {
         ser_info.insert("replication".to_string(), rep_v);
 
         log::debug!("server info is {:?}", ser_info);
-        //if file
-        if file_path.is_file() {
+
+        //parse storage file
+        let storage = if file_path.is_file() {
             let mut rdbfile_reader = RdbParser::new(File::open(file_path.as_path()).await?);
-            server = Server {
-                storage: Arc::new(Mutex::new(
-                    rdbfile_reader.parse().await.expect("rdb_file parse error"),
-                )),
-                option: conf,
-                rep: Arc::new(Mutex::new(Replication::new())),
-                info: Arc::new(Mutex::new(ser_info)),
-            };
+            Arc::new(Mutex::new(
+                rdbfile_reader.parse().await.expect("rdb_file parse error"),
+            ))
         } else {
-            server = Server {
-                storage: Arc::new(Mutex::new(RdbFile::new(RDB_VERSION))),
-                option: conf,
-                rep: Arc::new(Mutex::new(Replication::new())),
-                info: Arc::new(Mutex::new(ser_info)),
-            };
-        }
+            Arc::new(Mutex::new(RdbFile::new(RDB_VERSION)))
+        };
+
+        server = Server {
+            storage: storage,
+            option: conf,
+            repl_set: Arc::new(Mutex::new(ReplicationSet::new())),
+            info: Arc::new(Mutex::new(ser_info)),
+        };
+
         server.init().await;
 
         Ok(server)
     }
     pub async fn init(&mut self) {
+        if self.is_slave() {
+            let (addr, port) = self.option.replicaof.as_ref().unwrap();
+            let stream = TcpStream::connect(format!("{}:{}", addr, port))
+                .await
+                .unwrap();
+
+            self.ping_master(stream).await.unwrap();
+        }
         log::info!("server init has finished!!");
     }
     pub async fn get_a_info(&self, k: &str) -> DashMap<String, String> {
@@ -119,6 +130,23 @@ impl Server {
 
     pub async fn get_all_info(&self) -> DashMap<String, DashMap<String, String>> {
         self.info.lock().await.to_owned()
+    }
+
+    pub async fn ping_master(&self, mut stream: TcpStream) -> Result<()> {
+        stream.writable().await?;
+        stream
+            .write_all(&SimpleString::new(b"PONG").bytes().to_vec())
+            .await?;
+
+        let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
+        let n = stream.read(&mut buf).await?;
+        let read_array: Array = Array::parse(&buf, &mut 0, &n).expect("bulkString parse error");
+
+        if read_array.to_vec() != Array::from_bytes(Bytes::from_static(b"PONG")).to_vec() {
+            bail!("Cant't receive a PONG")
+        }
+
+        Ok(())
     }
 
     pub async fn handle_client(&self, mut stream: TcpStream) -> Result<()> {
@@ -178,5 +206,8 @@ impl Server {
             }
         }
         Ok(())
+    }
+    pub fn is_slave(&self) -> bool {
+        !self.option.is_master
     }
 }

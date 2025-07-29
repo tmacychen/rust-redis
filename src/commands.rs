@@ -5,7 +5,6 @@ use std::{
 
 use crate::{
     db::{Dbconf, Expiry, KeyValue, RdbFile, RedisValue, DB_NUM},
-    replication::Replication,
     server::Server,
 };
 use anyhow::{bail, Result};

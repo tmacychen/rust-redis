@@ -7,32 +7,19 @@
 
 */
 
-use dashmap::DashMap;
+use std::net::TcpStream;
 
-#[derive(Clone, Debug)]
-pub struct Replication {
-    info: DashMap<String, String>,
+#[derive(Debug)]
+pub struct ReplicationSet {
+    repl_streams: Vec<TcpStream>,
 }
-impl Replication {
+impl ReplicationSet {
     pub fn new() -> Self {
-        let rep = Replication {
-            info: DashMap::new(),
-        };
-        rep.info.insert("role".to_string(), "master".to_string());
-        rep
-    }
-
-    pub fn get(&self, k: &str) -> Option<String> {
-        match self.info.get(k) {
-            Some(v) => Some(v.value().clone()),
-            None => None,
+        ReplicationSet {
+            repl_streams: Vec::new(),
         }
     }
-    pub fn get_all(&self) -> Vec<(String, String)> {
-        let mut ret = Vec::new();
-        self.info
-            .iter()
-            .for_each(|e| ret.push((e.key().clone(), e.value().clone())));
-        ret
+    pub fn add_stream(&mut self, steam: TcpStream) {
+        self.repl_streams.push(steam);
     }
 }

@@ -60,25 +60,25 @@ async fn main() -> Result<()> {
     let rep: Vec<&str> = args.replicaof.split_whitespace().collect();
 
     let s_opt = if rep.len() < 2 || rep[1].parse::<u32>().is_err() {
-        log::debug!(" replicaof's arguments parse None!!!");
-        ServerOpt::new(db_conf, None)
+        log::debug!(" no replicaof's arguments !!! Create a Master");
+        ServerOpt::new(db_conf, None, true)
     } else {
         ServerOpt::new(
             db_conf,
             Some((rep[0].to_lowercase(), rep[1].to_lowercase())),
+            false,
         )
     };
 
-    let server_arc = Arc::new(
-        server::Server::new(s_opt)
-            .await
-            .expect("create server error"),
-    );
+    let server = server::Server::new(s_opt)
+        .await
+        .expect("create server error");
+
     loop {
         let stream = listener.accept().await;
         match stream {
             Ok((stream, _)) => {
-                let server_clone = Arc::clone(&server_arc);
+                let server_clone = server.clone();
                 tokio::spawn(async move {
                     if let Err(e) = server_clone.handle_client(stream).await {
                         error!("handle client error :{}", e);
