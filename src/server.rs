@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::{bail, Result};
 use dashmap::DashMap;
+use rand::{distr::Alphabetic, rngs::ThreadRng, thread_rng, Rng};
 use resp_protocol::Array;
 use tklog::info;
 use tokio::{
@@ -19,10 +20,27 @@ use crate::commands;
 const BUF_SIZE: usize = 100;
 
 #[derive(Clone, Debug)]
-
 pub struct ServerOpt {
     pub db_conf: Dbconf,
     pub replicaof: Option<(String, String)>,
+    master_replid: String,
+    master_repl_offset: u32,
+}
+
+impl ServerOpt {
+    pub fn new(db_conf: Dbconf, replicaof: Option<(String, String)>) -> Self {
+        let replid = thread_rng()
+            .sample_iter(&Alphabetic)
+            .map(char::from)
+            .take(40)
+            .collect();
+        ServerOpt {
+            db_conf: db_conf,
+            replicaof: replicaof,
+            master_replid: replid,
+            master_repl_offset: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +64,7 @@ impl Server {
         }
 
         let ser_info: DashMap<String, DashMap<String, String>> = DashMap::new();
+
         let rep_v: DashMap<String, String> = DashMap::new();
         if conf.replicaof.is_some() {
             rep_v.insert("role".to_string(), "slave".to_string());
@@ -53,7 +72,14 @@ impl Server {
             rep_v.insert("role".to_string(), "master".to_string());
         }
 
+        rep_v.insert("master_replid".to_string(), conf.master_replid.clone());
+        rep_v.insert(
+            "master_repl_offset".to_string(),
+            format!("{}", conf.master_repl_offset),
+        );
+
         ser_info.insert("replication".to_string(), rep_v);
+
         log::debug!("server info is {:?}", ser_info);
         //if file
         if file_path.is_file() {

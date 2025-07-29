@@ -61,15 +61,12 @@ async fn main() -> Result<()> {
 
     let s_opt = if rep.len() < 2 || rep[1].parse::<u32>().is_err() {
         log::debug!(" replicaof's arguments parse None!!!");
-        ServerOpt {
-            db_conf: db_conf,
-            replicaof: None,
-        }
+        ServerOpt::new(db_conf, None)
     } else {
-        ServerOpt {
-            db_conf: db_conf,
-            replicaof: Some((rep[0].to_lowercase(), rep[1].to_lowercase())),
-        }
+        ServerOpt::new(
+            db_conf,
+            Some((rep[0].to_lowercase(), rep[1].to_lowercase())),
+        )
     };
 
     let server_arc = Arc::new(
