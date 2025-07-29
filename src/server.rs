@@ -22,7 +22,7 @@ const BUF_SIZE: usize = 100;
 
 pub struct ServerOpt {
     pub db_conf: Dbconf,
-    pub replicaof: String,
+    pub replicaof: Option<(String, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -46,12 +46,13 @@ impl Server {
         }
 
         let ser_info: DashMap<String, DashMap<String, String>> = DashMap::new();
-
-        let rep: Vec<&str> = conf.replicaof.split_whitespace().collect();
-        let rep_v = DashMap::new();
-        rep_v.insert(rep[0].to_string(), rep[1].to_string());
-
-        ser_info.insert("replication".to_string(), rep_v);
+        if conf.replicaof.is_some() {
+            let rep_v = DashMap::new();
+            let a = conf.replicaof.clone().unwrap();
+            rep_v.insert(a.0, a.1);
+            ser_info.insert("replication".to_string(), rep_v);
+            log::debug!("server info is {:?}", ser_info);
+        }
 
         //if file
         if file_path.is_file() {
@@ -77,11 +78,9 @@ impl Server {
         Ok(server)
     }
     pub async fn init(&mut self) {
-        let mut info = self.info.lock().await;
-
         log::info!("server init has finished!!");
     }
-    pub async fn get_info(&self, k: &str) -> DashMap<String, String> {
+    pub async fn get_a_info(&self, k: &str) -> DashMap<String, String> {
         self.info
             .lock()
             .await
@@ -89,6 +88,10 @@ impl Server {
             .expect("get server info error")
             // .value()
             .clone()
+    }
+
+    pub async fn get_all_info(&self) -> DashMap<String, DashMap<String, String>> {
+        self.info.lock().await.to_owned()
     }
 
     pub async fn handle_client(&self, mut stream: TcpStream) -> Result<()> {

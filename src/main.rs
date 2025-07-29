@@ -56,15 +56,20 @@ async fn main() -> Result<()> {
         db_conf.set(args.dir.clone(), args.dbfilename.clone());
     }
 
-    let rep = args.replicaof.clone();
-    let port = rep.split_whitespace().last();
-    if port.is_some_and(|p| p.parse::<u32>().is_err()) {
-        bail!(" replicaof args need  to contain a correct port number !!")
-    }
+    //--replicaof "localhost 6379"
+    let rep: Vec<&str> = args.replicaof.split_whitespace().collect();
 
-    let s_opt = ServerOpt {
-        db_conf: db_conf,
-        replicaof: rep,
+    let s_opt = if rep.len() < 2 || rep[1].parse::<u32>().is_err() {
+        log::debug!(" replicaof's arguments parse None!!!");
+        ServerOpt {
+            db_conf: db_conf,
+            replicaof: None,
+        }
+    } else {
+        ServerOpt {
+            db_conf: db_conf,
+            replicaof: Some((rep[0].to_lowercase(), rep[1].to_lowercase())),
+        }
     };
 
     let server_arc = Arc::new(

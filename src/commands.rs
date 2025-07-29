@@ -193,27 +193,30 @@ impl<'a> Info<'a> {
     }
 
     async fn exec(&self) -> Result<Vec<u8>> {
+        let mut all = String::new();
         match &self.key {
             Some(k) => {
-
-                let v_hashmap = self.server.get_info(k).await ;
-                //TODO
-                v_hashmap.iter().for_each(|e|e.key();)                    
-                
-                // Some(v) => Ok(BulkString::new(format!("{}:{}", k, v).as_bytes())
-                //     .bytes()
-                //     .to_vec()),
-                // None => Ok(NULL_BULK_STRING.bytes().to_vec()),
-            },
+                let v_hashmap = self.server.get_a_info(k).await;
+                v_hashmap
+                    .iter()
+                    .for_each(|e| all.push_str(format!("{}:{}\r\n", e.key(), e.value()).as_str()));
+            }
             //inter for all keys
             None => {
-                let mut all = String::new();
-                // let mut all = arraybuilder::new();
-                for (k, v) in self.rep.lock().await.get_all() {
-                    all.push_str(format!("{}:{}\r\n", k, v).as_str());
+                let mut section = String::new();
+                for e in self.server.get_all_info().await.iter() {
+                    section.clear();
+                    e.value().iter().for_each(|e_e| {
+                        section.push_str(format!("{}:{}\r\n", e_e.key(), e_e.value()).as_str())
+                    });
+                    all.push_str(format!("# {}\r\n{}", e.key(), section).as_str());
                 }
-                Ok(BulkString::new(all.as_bytes()).bytes().to_vec())
             }
+        }
+        if all.len() == 0 {
+            Ok(NULL_BULK_STRING.bytes().to_vec())
+        } else {
+            Ok(BulkString::new(all.as_bytes()).bytes().to_vec())
         }
     }
 }
@@ -334,7 +337,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
                 Ok(BulkString::new(b"-1").bytes().to_vec())
             }
         },
-        b"config" => Config::new(&s[2..], &server.db_conf).exec(),
+        b"config" => Config::new(&s[2..], &server.option.db_conf).exec(),
         b"keys" => Keys::new(&s[2..], Arc::clone(&server.storage)).exec().await,
         b"info" => match arg_len {
             2 => Info::new(None, &server).exec().await,
