@@ -46,14 +46,15 @@ impl Server {
         }
 
         let ser_info: DashMap<String, DashMap<String, String>> = DashMap::new();
+        let rep_v: DashMap<String, String> = DashMap::new();
         if conf.replicaof.is_some() {
-            let rep_v = DashMap::new();
-            let a = conf.replicaof.clone().unwrap();
-            rep_v.insert(a.0, a.1);
-            ser_info.insert("replication".to_string(), rep_v);
-            log::debug!("server info is {:?}", ser_info);
+            rep_v.insert("role".to_string(), "slave".to_string());
+        } else {
+            rep_v.insert("role".to_string(), "master".to_string());
         }
 
+        ser_info.insert("replication".to_string(), rep_v);
+        log::debug!("server info is {:?}", ser_info);
         //if file
         if file_path.is_file() {
             let mut rdbfile_reader = RdbParser::new(File::open(file_path.as_path()).await?);
