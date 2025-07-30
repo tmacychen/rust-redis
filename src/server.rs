@@ -9,7 +9,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use rand::rng;
 use rand::{distr::Alphabetic, Rng};
-use resp_protocol::{Array, SimpleString};
+use resp_protocol::{Array, ArrayBuilder, SimpleString};
 use tklog::info;
 use tokio::{
     fs::File,
@@ -133,9 +133,13 @@ impl Server {
     }
 
     pub async fn ping_master(&self, mut stream: TcpStream) -> Result<()> {
-        let respon_byte = Array::from_slice(b"PONG").bytes().to_vec();
+        let respon_byte = ArrayBuilder::new()
+            .insert(resp_protocol::RespType::SimpleString(SimpleString::new(
+                b"PING",
+            )))
+            .build();
         stream.writable().await?;
-        stream.write_all(&respon_byte).await?;
+        stream.write_all(&respon_byte.bytes().to_vec()).await?;
 
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
         let n = stream.read(&mut buf).await?;
