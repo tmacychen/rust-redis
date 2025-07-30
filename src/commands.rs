@@ -26,11 +26,15 @@ pub struct Keys<'a>(&'a [&'a [u8]], Arc<Mutex<RdbFile>>);
 
 impl Ping {
     fn exec(&self) -> Result<Vec<u8>> {
-        Ok(ArrayBuilder::new()
-            .insert(RespType::BulkString(BulkString::new(b"PONG")))
-            .build()
-            .bytes()
-            .to_vec())
+        // Ok(ArrayBuilder::new()
+        //     .insert(RespType::BulkString(BulkString::new(b"PONG")))
+        //     .build()
+        //     .bytes()
+        //     .to_vec())
+        //
+        // back to simplestring?
+        //
+        Ok(SimpleString::new(b"PONG").bytes().to_vec())
     }
 }
 impl Echo {
