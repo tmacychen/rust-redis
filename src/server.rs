@@ -133,10 +133,9 @@ impl Server {
     }
 
     pub async fn ping_master(&self, mut stream: TcpStream) -> Result<()> {
+        let respon_byte = Array::from_slice(b"PONG").bytes().to_vec();
         stream.writable().await?;
-        stream
-            .write_all(&SimpleString::new(b"PONG").bytes().to_vec())
-            .await?;
+        stream.write_all(&respon_byte).await?;
 
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
         let n = stream.read(&mut buf).await?;
