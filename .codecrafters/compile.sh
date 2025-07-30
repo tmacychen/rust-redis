@@ -7,5 +7,4 @@
 # Learn more: https://codecrafters.io/program-interface
 
 set -e # Exit on failure
-cargo install patch-crate
 cargo build --release --target-dir=/tmp/codecrafters-build-redis-rust --manifest-path Cargo.toml
