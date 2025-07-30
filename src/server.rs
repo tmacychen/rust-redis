@@ -5,11 +5,10 @@ use crate::{
     replication::ReplicationSet,
 };
 use anyhow::{bail, Result};
-use bytes::Bytes;
 use dashmap::DashMap;
 use rand::rng;
 use rand::{distr::Alphabetic, Rng};
-use resp_protocol::{Array, ArrayBuilder, SimpleString};
+use resp_protocol::{Array, ArrayBuilder, BulkString};
 use tklog::info;
 use tokio::{
     fs::File,
@@ -134,7 +133,7 @@ impl Server {
 
     pub async fn ping_master(&self, mut stream: TcpStream) -> Result<()> {
         let respon_byte = ArrayBuilder::new()
-            .insert(resp_protocol::RespType::SimpleString(SimpleString::new(
+            .insert(resp_protocol::RespType::BulkString(BulkString::new(
                 b"PING",
             )))
             .build();
@@ -149,10 +148,9 @@ impl Server {
             n,
             String::from_utf8_lossy(&buf[0..n]).to_string()
         );
-        let read_array: SimpleString =
-            SimpleString::parse(&buf, &mut 0, &n).expect("bulkString parse error");
+        let read_array: Array = Array::parse(&buf, &mut 0, &n).expect("bulkString parse error");
 
-        if read_array != SimpleString::new(b"PONG") {
+        if read_array.to_vec().as_slice() != b"*1\r\n$4\r\nPONG\r\n" {
             bail!("Cant't receive a PONG")
         }
 

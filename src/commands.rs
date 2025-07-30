@@ -26,7 +26,11 @@ pub struct Keys<'a>(&'a [&'a [u8]], Arc<Mutex<RdbFile>>);
 
 impl Ping {
     fn exec(&self) -> Result<Vec<u8>> {
-        Ok(SimpleString::new(b"PONG").bytes().to_vec())
+        Ok(ArrayBuilder::new()
+            .insert(RespType::BulkString(BulkString::new(b"PONG")))
+            .build()
+            .bytes()
+            .to_vec())
     }
 }
 impl Echo {
@@ -221,18 +225,8 @@ impl<'a> Info<'a> {
 }
 pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Result<Vec<u8>> {
     log::debug!("get s:{:?}", s);
-    // for ping simple string
-    if arg_len == 1 {
-        if String::from_utf8_lossy(s[0])
-            .to_lowercase()
-            .contains("ping")
-        {
-            return Ping.exec();
-        } else {
-            return Ok(BulkString::new(b"-1").bytes().to_vec());
-        }
-    }
     match s[1].to_ascii_lowercase().as_slice() {
+        b"ping" => crate::commands::Ping.exec(),
         b"echo" => {
             // 计算echo后的字符串长度,for create vec
             let len = s[2..].iter().enumerate().fold(
