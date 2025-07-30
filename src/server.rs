@@ -112,9 +112,9 @@ impl Server {
             let (addr, port) = self.option.replicaof.as_ref().unwrap();
             let stream = TcpStream::connect(format!("{}:{}", addr, port))
                 .await
-                .unwrap();
+                .expect("connect master failed!!");
 
-            self.ping_master(stream).await.unwrap();
+            self.ping_master(stream).await.expect("ping master failed!");
         }
         log::info!("server init has finished!!");
     }
@@ -138,14 +138,21 @@ impl Server {
                 b"PING",
             )))
             .build();
+
         stream.writable().await?;
         stream.write_all(&respon_byte.bytes().to_vec()).await?;
 
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
         let n = stream.read(&mut buf).await?;
-        let read_array: Array = Array::parse(&buf, &mut 0, &n).expect("bulkString parse error");
+        log::debug!(
+            "[Master Response!] read from stream bytes num is  {}\nto string is {}",
+            n,
+            String::from_utf8_lossy(&buf[0..n]).to_string()
+        );
+        let read_array: SimpleString =
+            SimpleString::parse(&buf, &mut 0, &n).expect("bulkString parse error");
 
-        if read_array.to_vec() != Array::from_bytes(Bytes::from_static(b"PONG")).to_vec() {
+        if read_array != SimpleString::new(b"PONG") {
             bail!("Cant't receive a PONG")
         }
 
@@ -200,8 +207,6 @@ impl Server {
                 "output is ready to write back:{:?}",
                 String::from_utf8_lossy(&output)
             );
-
-            println!("output :{}", String::from_utf8(output.clone()).unwrap());
 
             stream.writable().await?;
             if let Err(e) = stream.write_all(&output).await {

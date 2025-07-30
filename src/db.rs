@@ -660,7 +660,7 @@ impl<R: AsyncReadExt + AsyncSeekExt + Unpin> RdbParser<R> {
         Ok(byte)
     }
 }
-
+/*
 // RDB文件异步写入器
 pub struct RdbWriter<W: AsyncWriteExt + AsyncSeekExt + Unpin> {
     writer: W,
@@ -865,3 +865,4 @@ impl<W: AsyncWriteExt + AsyncSeekExt + Unpin> RdbWriter<W> {
         self.write_bytes(&buf).await
     }
 }
+*/
