@@ -9,17 +9,27 @@
 
 use std::net::TcpStream;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
+pub struct Replication {
+    pub port: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct ReplicationSet {
-    repl_streams: Vec<TcpStream>,
+    repls: Vec<Replication>,
 }
 impl ReplicationSet {
     pub fn new() -> Self {
-        ReplicationSet {
-            repl_streams: Vec::new(),
-        }
+        ReplicationSet { repls: Vec::new() }
     }
-    pub fn add_stream(&mut self, steam: TcpStream) {
-        self.repl_streams.push(steam);
+    pub fn add_a_repl(&mut self, a_repl: Replication) {
+        self.repls.push(a_repl);
+    }
+
+    pub fn is_exsits(&self, a_repl: Replication) -> bool {
+        self.repls.iter().any(|r| r.port == a_repl.port)
+    }
+    pub fn is_empty(&self) -> bool {
+        self.repls.len() == 0
     }
 }

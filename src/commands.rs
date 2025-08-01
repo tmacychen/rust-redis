@@ -5,11 +5,14 @@ use std::{
 
 use crate::{
     db::{Dbconf, Expiry, KeyValue, RdbFile, RedisValue, DB_NUM},
+    replication::Replication,
     server::Server,
 };
 use anyhow::{bail, Result};
 use log::error;
-use resp_protocol::{ArrayBuilder, BulkString, Error, RespType, SimpleString, NULL_BULK_STRING};
+use resp_protocol::{
+    ArrayBuilder, BulkString, Error, RespType, SimpleString, EMPTY_BULK_STRING, NULL_BULK_STRING,
+};
 use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
@@ -24,16 +27,11 @@ pub struct Set<'a>(String, KeyValue, &'a Server);
 
 pub struct Keys<'a>(&'a [&'a [u8]], Arc<Mutex<RdbFile>>);
 
+pub struct Repl<'a>(&'a [&'a [u8]], &'a Server);
+
 impl Ping {
     fn exec(&self) -> Result<Vec<u8>> {
-        // Ok(ArrayBuilder::new()
-        //     .insert(RespType::BulkString(BulkString::new(b"PONG")))
-        //     .build()
-        //     .bytes()
-        //     .to_vec())
-        //
-        // back to simplestring?
-        //
+        // back to simplestring
         Ok(SimpleString::new(b"PONG").bytes().to_vec())
     }
 }
@@ -137,6 +135,33 @@ impl<'a> Keys<'a> {
             } else {
                 Ok(BulkString::new(b"-1").bytes().to_vec())
             }
+        }
+    }
+}
+impl<'a> Repl<'a> {
+    pub fn new(cmd: &'a [&[u8]], s: &'a Server) -> Self {
+        Repl(cmd, s)
+    }
+    async fn exec(&self) -> Result<Vec<u8>> {
+        log::debug!("repl conf request is {:?}", &self.0);
+
+        match self.0[1].to_ascii_lowercase().as_slice() {
+            b"listening-port" => {
+                self.1
+                    .insert_a_repl(Replication {
+                        port: String::from_utf8_lossy(self.0[3]).to_string(),
+                    })
+                    .await;
+                Ok(SimpleString::new(b"OK").bytes().to_vec())
+            }
+            b"ncapa" => {
+                if self.1.repl_set.lock().await.is_empty() {
+                    Ok(NULL_BULK_STRING.bytes().to_vec())
+                } else {
+                    Ok(SimpleString::new(b"OK").bytes().to_vec())
+                }
+            }
+            _ => bail!("unknown config sub cmd "),
         }
     }
 }
@@ -355,6 +380,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
             }
             _ => bail!("info args number error!"),
         },
+        b"replconf" => Repl::new(&s[2..], &server).exec().await,
 
         _ => bail!("cmd parse error"),
     }
