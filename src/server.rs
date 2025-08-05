@@ -143,6 +143,7 @@ impl Server {
 
         stream.writable().await?;
         stream.write_all(&respon_byte.to_vec()).await?;
+        stream.flush().await?;
 
         Server::get_repspon_master(stream, b"PONG").await
     }
@@ -170,16 +171,17 @@ impl Server {
         )));
 
         log::debug!("wirte:listening-port!{:?}", listen_port.build());
-        stream.writable().await?;
-        stream.write_all(&listen_port.build().to_vec()).await?;
+        // stream.writable().await?;
+        // stream.write_all(&listen_port.build().to_vec()).await?;
+        // stream.flush().await?;
 
-        if Server::get_repspon_master(stream, b"OK").await.is_err() {
-            bail!("master retrun error")
-        }
+        // if Server::get_repspon_master(stream, b"OK").await.is_err() {
+        //     bail!("master retrun error")
+        // }
 
-        let mut stream = TcpStream::connect(format!("{}:{}", addr, port))
-            .await
-            .expect("connect master failed!!");
+        // let mut stream = TcpStream::connect(format!("{}:{}", addr, port))
+        //     .await
+        //     .expect("connect master failed!!");
         let mut psync = ArrayBuilder::new();
 
         psync.insert(resp_protocol::RespType::BulkString(BulkString::new(
@@ -192,9 +194,11 @@ impl Server {
             b"psync2",
         )));
 
-        log::debug!("wirte:ncapa psync2");
         stream.writable().await?;
         stream.write_all(&listen_port.build().to_vec()).await?;
+        log::debug!("wirte:ncapa psync2");
+        stream.write_all(&psync.build().to_vec()).await?;
+        stream.flush().await?;
 
         Server::get_repspon_master(stream, b"OK").await
     }
