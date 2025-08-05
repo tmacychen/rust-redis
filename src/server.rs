@@ -142,7 +142,7 @@ impl Server {
             .build();
 
         stream.writable().await?;
-        stream.write_all(&respon_byte.bytes().to_vec()).await?;
+        stream.write_all(&respon_byte.to_vec()).await?;
 
         Server::get_repspon_master(stream, b"PONG").await
     }
@@ -171,9 +171,7 @@ impl Server {
 
         log::debug!("wirte:listening-port!");
         stream.writable().await?;
-        stream
-            .write_all(&listen_port.build().bytes().to_vec())
-            .await?;
+        stream.write_all(&listen_port.build().to_vec()).await?;
 
         if Server::get_repspon_master(stream, b"OK").await.is_err() {
             bail!("master retrun error")
