@@ -169,7 +169,7 @@ impl Server {
                 .as_bytes(),
         )));
 
-        log::debug!("wirte:listening-port!");
+        log::debug!("wirte:listening-port!{:?}", listen_port.build());
         stream.writable().await?;
         stream.write_all(&listen_port.build().to_vec()).await?;
 
