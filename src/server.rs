@@ -169,9 +169,11 @@ impl Server {
                 .as_bytes(),
         )));
 
-        log::debug!("wirte:listening-port");
+        log::debug!("wirte:listening-port!");
         stream.writable().await?;
-        stream.write_all(&listen_port.build().to_vec()).await?;
+        stream
+            .write_all(&listen_port.build().bytes().to_vec())
+            .await?;
 
         if Server::get_repspon_master(stream, b"OK").await.is_err() {
             bail!("master retrun error")
@@ -203,7 +205,7 @@ impl Server {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
         let n = stream.read(&mut buf).await?;
         log::debug!(
-            "[Master Response!] read from stream bytes num is  {}\nto string is {}",
+            "[Master Response!] read from stream bytes num is  {}\t to string is {}",
             n,
             String::from_utf8_lossy(&buf[0..n]).to_string()
         );
