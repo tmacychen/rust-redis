@@ -112,7 +112,7 @@ impl Server {
             self.ping_master(addr, port)
                 .await
                 .expect("ping master failed!");
-            self.repl_conf(addr, port).await.expect("repl conf failed!");
+            // self.repl_conf(addr, port).await.expect("repl conf failed!");
         }
         log::info!("server init has finished!!");
     }
@@ -145,13 +145,15 @@ impl Server {
         stream.write_all(&respon_byte.to_vec()).await?;
         stream.flush().await?;
 
-        Server::get_repspon_master(stream, b"PONG").await
-    }
+        let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
+        let n = stream.read(&mut buf).await?;
+        log::debug!(
+            "[Master Response!] read from stream bytes num is  {}\t to string is {}",
+            n,
+            String::from_utf8_lossy(&buf[0..n]).to_string()
+        );
 
-    pub async fn repl_conf(&self, addr: &str, port: &str) -> Result<()> {
-        let mut stream = TcpStream::connect(format!("{}:{}", addr, port))
-            .await
-            .expect("connect master failed!!");
+        Server::get_repspon_master(&buf[0..n], b"PONG").await?;
 
         let mut listen_port = ArrayBuilder::new();
 
@@ -171,17 +173,6 @@ impl Server {
         )));
 
         log::debug!("wirte:listening-port!{:?}", listen_port.build());
-        // stream.writable().await?;
-        // stream.write_all(&listen_port.build().to_vec()).await?;
-        // stream.flush().await?;
-
-        // if Server::get_repspon_master(stream, b"OK").await.is_err() {
-        //     bail!("master retrun error")
-        // }
-
-        // let mut stream = TcpStream::connect(format!("{}:{}", addr, port))
-        //     .await
-        //     .expect("connect master failed!!");
         let mut psync = ArrayBuilder::new();
 
         psync.insert(resp_protocol::RespType::BulkString(BulkString::new(
@@ -200,10 +191,6 @@ impl Server {
         stream.write_all(&psync.build().to_vec()).await?;
         stream.flush().await?;
 
-        Server::get_repspon_master(stream, b"OK").await
-    }
-
-    async fn get_repspon_master(mut stream: TcpStream, expect: &[u8]) -> Result<()> {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
         let n = stream.read(&mut buf).await?;
         log::debug!(
@@ -211,9 +198,30 @@ impl Server {
             n,
             String::from_utf8_lossy(&buf[0..n]).to_string()
         );
+        Server::get_repspon_master(&buf[0..n], b"OK").await
+    }
 
+    // pub async fn repl_conf(&self, addr: &str, port: &str) -> Result<()> {
+    //     let mut stream = TcpStream::connect(format!("{}:{}", addr, port))
+    //         .await
+    //         .expect("connect master failed!!");
+
+    //     stream.writable().await?;
+    //     stream.write_all(&listen_port.build().to_vec()).await?;
+    //     stream.flush().await?;
+
+    //     if Server::get_repspon_master(stream, b"OK").await.is_err() {
+    //         bail!("master retrun error")
+    //     }
+
+    //     let mut stream = TcpStream::connect(format!("{}:{}", addr, port))
+    //         .await
+    //         .expect("connect master failed!!");
+    // }
+
+    async fn get_repspon_master(buf: &[u8], expect: &[u8]) -> Result<()> {
         let read_response =
-            SimpleString::parse(&buf, &mut 0, &n).expect("simple string parse error!");
+            SimpleString::parse(buf, &mut 0, &buf.len()).expect("simple string parse error!");
         if read_response != SimpleString::new(expect) {
             bail!("Cant't receive a PONG")
         }
