@@ -22,6 +22,7 @@ const BUF_SIZE: usize = 100;
 
 #[derive(Clone, Debug)]
 pub struct ServerOpt {
+    pub port: String,
     pub db_conf: Dbconf,
     pub replicaof: Option<(String, String)>,
     master_replid: String,
@@ -30,13 +31,19 @@ pub struct ServerOpt {
 }
 
 impl ServerOpt {
-    pub fn new(db_conf: Dbconf, replicaof: Option<(String, String)>, is_master: bool) -> Self {
+    pub fn new(
+        port: String,
+        db_conf: Dbconf,
+        replicaof: Option<(String, String)>,
+        is_master: bool,
+    ) -> Self {
         let replid = rng()
             .sample_iter(&Alphabetic)
             .map(char::from)
             .take(40)
             .collect();
         ServerOpt {
+            port: port,
             db_conf: db_conf,
             replicaof: replicaof,
             master_replid: replid,
@@ -164,12 +171,7 @@ impl Server {
             b"listening-port",
         )));
         listen_port.insert(resp_protocol::RespType::BulkString(BulkString::new(
-            self.option
-                .replicaof
-                .as_ref()
-                .expect("get repl port error")
-                .1
-                .as_bytes(),
+            self.option.port.as_bytes(),
         )));
 
         log::debug!("wirte:listening-port!{:?}", listen_port.build());

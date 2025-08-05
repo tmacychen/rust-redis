@@ -61,9 +61,10 @@ async fn main() -> Result<()> {
 
     let s_opt = if rep.len() < 2 || rep[1].parse::<u32>().is_err() {
         log::debug!(" no replicaof's arguments !!! Create a Master");
-        ServerOpt::new(db_conf, None, true)
+        ServerOpt::new(args.port, db_conf, None, true)
     } else {
         ServerOpt::new(
+            args.port,
             db_conf,
             Some((rep[0].to_lowercase(), rep[1].to_lowercase())),
             false,
