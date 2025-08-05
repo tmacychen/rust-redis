@@ -181,7 +181,7 @@ impl Server {
             b"REPLCONF",
         )));
         psync.insert(resp_protocol::RespType::BulkString(BulkString::new(
-            b"ncapa",
+            b"capa",
         )));
         psync.insert(resp_protocol::RespType::BulkString(BulkString::new(
             b"psync2",
