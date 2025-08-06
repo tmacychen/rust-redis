@@ -381,6 +381,20 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
             _ => bail!("info args number error!"),
         },
         b"replconf" => Repl::new(&s[2..], &server).exec().await,
+        b"psync" => {
+            log::debug!("pysync is {:?}", &s[2..]);
+
+            match s[2].to_ascii_lowercase().as_slice() {
+                b"?" => {
+                    if s[3] == b"-1" {
+                        Ok(SimpleString::new(b"OK").bytes().to_vec())
+                    } else {
+                        Ok(SimpleString::new(b"-1").bytes().to_vec())
+                    }
+                }
+                _ => bail!("match psync error!"),
+            }
+        }
 
         _ => bail!("cmd parse error"),
     }
