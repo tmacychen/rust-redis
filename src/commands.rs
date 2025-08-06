@@ -154,7 +154,7 @@ impl<'a> Repl<'a> {
                     .await;
                 Ok(SimpleString::new(b"OK").bytes().to_vec())
             }
-            b"ncapa" => {
+            b"capa" => {
                 if self.1.repl_set.lock().await.is_empty() {
                     Ok(NULL_BULK_STRING.bytes().to_vec())
                 } else {
