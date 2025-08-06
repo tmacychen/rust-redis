@@ -132,6 +132,7 @@ impl Server {
             self.repl_conf(&mut stream)
                 .await
                 .expect("repl conf failed!");
+            self.psync(&mut stream).await.expect("psync failed!");
         }
         log::info!("server init has finished!!");
     }
@@ -197,6 +198,22 @@ impl Server {
         Server::get_repspon_master(stream, b"OK").await
     }
 
+    pub async fn psync(&self, stream: &mut TcpStream) -> Result<()> {
+        let mut psync = ArrayBuilder::new();
+
+        psync.insert(resp_protocol::RespType::BulkString(BulkString::new(
+            b"PSYNC",
+        )));
+        psync.insert(resp_protocol::RespType::BulkString(BulkString::new(b"?")));
+        psync.insert(resp_protocol::RespType::BulkString(BulkString::new(b"-1")));
+
+        stream.writable().await?;
+        log::debug!("wirte:psync");
+        stream.write_all(&psync.build().to_vec()).await?;
+        stream.flush().await?;
+
+        Server::get_repspon_master(stream, b"FULLRESYNC ").await
+    }
     async fn get_repspon_master(stream: &mut TcpStream, expect: &[u8]) -> Result<()> {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
         let n = stream.read(&mut buf).await?;
