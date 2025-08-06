@@ -384,9 +384,9 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
         b"psync" => {
             log::debug!("pysync is {:?}", &s[2..]);
 
-            match s[2].to_ascii_lowercase().as_slice() {
+            match s[3].to_ascii_lowercase().as_slice() {
                 b"?" => {
-                    if s[3] == b"-1" {
+                    if s[5] == b"-1" {
                         Ok(SimpleString::new(
                             format!(
                                 "FULLRESYNC {} {}",
