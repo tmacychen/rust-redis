@@ -387,16 +387,25 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
             match s[3].to_ascii_lowercase().as_slice() {
                 b"?" => {
                     if s[5] == b"-1" {
-                        Ok(SimpleString::new(
-                            format!(
-                                "FULLRESYNC {} {}",
-                                server.option.get_master_replid(),
-                                server.option.get_repl_offset()
+                        let mut ret = Vec::new();
+                        ret.extend(
+                            SimpleString::new(
+                                format!(
+                                    "FULLRESYNC {} {}",
+                                    server.option.get_master_replid(),
+                                    server.option.get_repl_offset()
+                                )
+                                .as_bytes(),
                             )
-                            .as_bytes(),
-                        )
-                        .bytes()
-                        .to_vec())
+                            .bytes()
+                            .to_vec(),
+                        );
+
+                        ret.extend(BulkString::new(b"524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2").bytes().to_vec());
+                        //for pop the last  two bytes "\r\n"
+                        ret.pop();
+                        ret.pop();
+                        Ok(ret)
                     } else {
                         Ok(SimpleString::new(b"-1").bytes().to_vec())
                     }
