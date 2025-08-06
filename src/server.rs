@@ -57,6 +57,15 @@ impl ServerOpt {
             is_master,
         }
     }
+    pub fn get_master_replid(&self) -> String {
+        self.master_replid.clone()
+    }
+    pub fn get_repl_offset(&self) -> u32 {
+        self.master_repl_offset
+    }
+    pub fn change_repl_offset(&mut self, o: u32) {
+        self.master_repl_offset = o;
+    }
 }
 
 #[derive(Clone, Debug)]
