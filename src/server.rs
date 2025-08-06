@@ -212,7 +212,7 @@ impl Server {
         stream.write_all(&psync.build().to_vec()).await?;
         stream.flush().await?;
 
-        Server::get_repspon_master(stream, b"FULLRESYNC ").await
+        Server::get_repspon_master(stream, b"OK").await
     }
     async fn get_repspon_master(stream: &mut TcpStream, expect: &[u8]) -> Result<()> {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
@@ -225,7 +225,7 @@ impl Server {
         let read_response =
             SimpleString::parse(&buf, &mut 0, &buf.len()).expect("simple string parse error!");
         if read_response != SimpleString::new(expect) {
-            bail!("Cant't receive a PONG")
+            bail!("Cant't receive correct info from master")
         }
         Ok(())
     }
