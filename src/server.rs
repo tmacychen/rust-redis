@@ -19,7 +19,7 @@ use tklog::{error, info};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
+    net::{TcpListener, TcpStream},
     sync::Mutex,
 };
 
@@ -33,7 +33,7 @@ pub struct ServerOpt {
     pub replicaof: Option<(String, String)>,
     master_replid: String,
     master_repl_offset: u32,
-    pub(crate) is_master: bool,
+    pub is_master: bool,
 }
 
 impl ServerOpt {
@@ -129,6 +129,9 @@ impl Server {
         Ok(server)
     }
     pub async fn init(&mut self) {
+        log::info!("server init has finished!!");
+    }
+    pub async fn start(&mut self, listener: TcpListener) -> Result<()> {
         if self.is_slave() {
             let (addr, port) = self.option.replicaof.as_ref().unwrap();
             let mut stream = TcpStream::connect(format!("{}:{}", addr, port))
@@ -142,8 +145,36 @@ impl Server {
                 .await
                 .expect("repl conf failed!");
             self.psync(&mut stream).await.expect("psync failed!");
+
+            let stream_arc = Arc::new(Mutex::new(stream));
+            loop {
+                let server_clone = self.clone();
+                let stream_arc = Arc::clone(&stream_arc);
+                tokio::spawn(async move {
+                    let mut locked_stream = stream_arc.lock().await;
+                    if let Err(e) = server_clone.handle_client(&mut *locked_stream).await {
+                        error!("handle client error :{}", e);
+                    }
+                });
+            }
+        } else {
+            loop {
+                let stream = listener.accept().await;
+                match stream {
+                    Ok((mut stream, _)) => {
+                        let server_clone = self.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = server_clone.handle_client(&mut stream).await {
+                                error!("handle client error :{}", e);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("listener accept error: {}", e);
+                    }
+                }
+            }
         }
-        log::info!("server init has finished!!");
     }
     pub async fn get_a_info(&self, k: &str) -> DashMap<String, String> {
         self.info
@@ -247,7 +278,7 @@ impl Server {
         self.repl_set.lock().await.is_exsits(a_repl)
     }
 
-    pub async fn handle_client(&self, mut stream: TcpStream) -> Result<()> {
+    pub async fn handle_client(&self, stream: &mut TcpStream) -> Result<()> {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
         loop {
             let n = stream.read(&mut buf).await?;

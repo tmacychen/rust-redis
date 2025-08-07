@@ -71,24 +71,9 @@ async fn main() -> Result<()> {
         )
     };
 
-    let server = server::Server::new(s_opt)
+    let mut server = server::Server::new(s_opt)
         .await
         .expect("create server error");
 
-    loop {
-        let stream = listener.accept().await;
-        match stream {
-            Ok((stream, _)) => {
-                let server_clone = server.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = server_clone.handle_client(stream).await {
-                        error!("handle client error :{}", e);
-                    }
-                });
-            }
-            Err(e) => {
-                error!("listener accept error: {}", e);
-            }
-        }
-    }
+    server.start(listener).await
 }
