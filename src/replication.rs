@@ -35,4 +35,7 @@ impl ReplicationSet {
     pub fn is_empty(&self) -> bool {
         self.repls.len() == 0
     }
+    pub fn get_repls(&self) -> &[Replication] {
+        self.repls.as_slice()
+    }
 }

@@ -268,8 +268,19 @@ impl Server {
         self.repl_set.lock().await.add_a_repl(a_repl);
     }
 
-    pub async fn is_a_repl_exsits(&self, a_repl: Replication) -> bool {
+    pub async fn repl_exsits(&self, a_repl: Replication) -> bool {
         self.repl_set.lock().await.is_exsits(a_repl)
+    }
+    pub async fn sync_to_repls(&self, s: &[u8]) -> Result<()> {
+        let repls = self.repl_set.lock().await;
+        for r in repls.get_repls() {
+            let mut stream = r.stream.lock().await;
+            let ready = stream.ready(Interest::WRITABLE).await?;
+            if ready.is_writable() {
+                stream.write_all(s).await?;
+            }
+        }
+        Ok(())
     }
 
     pub async fn handle_client(&self, stream_arc: Arc<Mutex<TcpStream>>) -> Result<()> {
@@ -290,6 +301,13 @@ impl Server {
                 n,
                 String::from_utf8_lossy(&buf[0..n]).to_string()
             );
+
+            let server_clone = self.clone();
+            tokio::spawn(async move {
+                if let Err(e) = server_clone.sync_to_repls(buf.clone().as_slice()).await {
+                    error!("sync to repls error{}", e);
+                }
+            });
 
             let read_array: Array = Array::parse(&buf, &mut 0, &n).expect("bulkString parse error");
             log::debug!("read from stream is {:?}", read_array);
