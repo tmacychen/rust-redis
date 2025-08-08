@@ -1,10 +1,4 @@
-use std::{
-    fs,
-    ops::DerefMut,
-    path::PathBuf,
-    rc::Rc,
-    sync::{Arc, MutexGuard},
-};
+use std::{fs, path::PathBuf, sync::Arc};
 
 use crate::{
     db::{Dbconf, RdbFile, RdbParser, RDB_VERSION},
@@ -18,7 +12,7 @@ use resp_protocol::{Array, ArrayBuilder, BulkString, SimpleString};
 use tklog::{error, info};
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt, Interest},
     net::{TcpListener, TcpStream},
     sync::Mutex,
 };
@@ -149,10 +143,9 @@ impl Server {
             let stream_arc = Arc::new(Mutex::new(stream));
             loop {
                 let server_clone = self.clone();
-                let stream_arc = Arc::clone(&stream_arc);
+                let stream_clone = stream_arc.clone();
                 tokio::spawn(async move {
-                    let mut locked_stream = stream_arc.lock().await;
-                    if let Err(e) = server_clone.handle_client(&mut *locked_stream).await {
+                    if let Err(e) = server_clone.handle_client(stream_clone).await {
                         error!("handle client error :{}", e);
                     }
                 });
@@ -161,10 +154,11 @@ impl Server {
             loop {
                 let stream = listener.accept().await;
                 match stream {
-                    Ok((mut stream, _)) => {
+                    Ok((stream, _)) => {
                         let server_clone = self.clone();
+                        let stream_arc = Arc::new(Mutex::new(stream));
                         tokio::spawn(async move {
-                            if let Err(e) = server_clone.handle_client(&mut stream).await {
+                            if let Err(e) = server_clone.handle_client(stream_arc.clone()).await {
                                 error!("handle client error :{}", e);
                             }
                         });
@@ -231,7 +225,7 @@ impl Server {
 
         stream.writable().await?;
         stream.write_all(&listen_port.build().to_vec()).await?;
-        log::debug!("wirte:ncapa psync2");
+        log::debug!("wirte:capa psync2");
         stream.write_all(&psync.build().to_vec()).await?;
         stream.flush().await?;
 
@@ -278,14 +272,18 @@ impl Server {
         self.repl_set.lock().await.is_exsits(a_repl)
     }
 
-    pub async fn handle_client(&self, stream: &mut TcpStream) -> Result<()> {
+    pub async fn handle_client(&self, stream_arc: Arc<Mutex<TcpStream>>) -> Result<()> {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
+        let mut stream = stream_arc.lock().await;
         loop {
-            let n = stream.read(&mut buf).await?;
-            if n == 0 {
-                info!("read size is 0, [A client connection CLOSED !] !");
+            let ready = stream
+                .ready(Interest::READABLE | Interest::WRITABLE)
+                .await?;
+            if ready.is_read_closed() || ready.is_write_closed() {
+                info!("[connection can't read or write! A client connection CLOSED !] !");
                 break;
-            };
+            }
+            let n = stream.read(&mut buf).await?;
 
             log::debug!(
                 "[A Client connected !] read from stream bytes num is  {}\nto string is {}",
@@ -316,27 +314,8 @@ impl Server {
                 .expect("parse arg_len error");
 
             log::debug!("arg len:is {}", arg_len);
-            let output: Vec<u8>;
 
-            match commands::from_cmd_to_exec(l.to_vec(), arg_len, self).await {
-                Ok(o) => {
-                    output = o;
-                }
-                Err(e) => {
-                    bail!("get a error from cmd{e}");
-                }
-            }
-
-            log::debug!("output is ready to write back Vec:{:?}", &output);
-            log::debug!(
-                "output is ready to write back:{:?}",
-                String::from_utf8_lossy(&output)
-            );
-
-            stream.writable().await?;
-            if let Err(e) = stream.write_all(&output).await {
-                bail!("Write client failed {:?}", e);
-            }
+            commands::from_cmd_to_exec(l.to_vec(), arg_len, stream_arc.clone(), self).await?;
         }
         Ok(())
     }

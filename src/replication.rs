@@ -7,14 +7,17 @@
 
 */
 
-use std::net::TcpStream;
+use std::sync::Arc;
 
-#[derive(Clone, Debug)]
+use tokio::{net::TcpStream, sync::Mutex};
+
+#[derive(Debug)]
 pub struct Replication {
+    pub stream: Arc<Mutex<TcpStream>>,
     pub port: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ReplicationSet {
     repls: Vec<Replication>,
 }

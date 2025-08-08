@@ -10,10 +10,8 @@ use crate::{
 };
 use anyhow::{bail, Result};
 use log::error;
-use resp_protocol::{
-    ArrayBuilder, BulkString, Error, RespType, SimpleString, EMPTY_BULK_STRING, NULL_BULK_STRING,
-};
-use tokio::sync::Mutex;
+use resp_protocol::{ArrayBuilder, BulkString, Error, RespType, SimpleString, NULL_BULK_STRING};
+use tokio::{io::AsyncWriteExt, net::TcpStream, sync::Mutex};
 
 #[derive(Clone, Debug)]
 pub struct Ping;
@@ -27,7 +25,7 @@ pub struct Set<'a>(String, KeyValue, &'a Server);
 
 pub struct Keys<'a>(&'a [&'a [u8]], Arc<Mutex<RdbFile>>);
 
-pub struct Repl<'a>(&'a [&'a [u8]], &'a Server);
+pub struct Repl<'a>(&'a [&'a [u8]], &'a Server, Arc<Mutex<TcpStream>>);
 
 impl Ping {
     fn exec(&self) -> Result<Vec<u8>> {
@@ -139,9 +137,10 @@ impl<'a> Keys<'a> {
     }
 }
 impl<'a> Repl<'a> {
-    pub fn new(cmd: &'a [&[u8]], s: &'a Server) -> Self {
-        Repl(cmd, s)
+    pub fn new(cmd: &'a [&[u8]], s: &'a Server, stream: Arc<Mutex<TcpStream>>) -> Self {
+        Repl(cmd, s, stream)
     }
+
     async fn exec(&self) -> Result<Vec<u8>> {
         log::debug!("repl conf request is {:?}", &self.0);
 
@@ -149,6 +148,7 @@ impl<'a> Repl<'a> {
             b"listening-port" => {
                 self.1
                     .insert_a_repl(Replication {
+                        stream: self.2.clone(),
                         port: String::from_utf8_lossy(self.0[3]).to_string(),
                     })
                     .await;
@@ -252,9 +252,14 @@ impl<'a> Info<'a> {
         }
     }
 }
-pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Result<Vec<u8>> {
+pub async fn from_cmd_to_exec(
+    s: Vec<&[u8]>,
+    arg_len: u8,
+    stream_arc: Arc<Mutex<TcpStream>>,
+    server: &Server,
+) -> Result<()> {
     log::debug!("get s:{:?}", s);
-    match s[1].to_ascii_lowercase().as_slice() {
+    let output = match s[1].to_ascii_lowercase().as_slice() {
         b"ping" => crate::commands::Ping.exec(),
         b"echo" => {
             // 计算echo后的字符串长度,for create vec
@@ -380,7 +385,7 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
             }
             _ => bail!("info args number error!"),
         },
-        b"replconf" => Repl::new(&s[2..], &server).exec().await,
+        b"replconf" => Repl::new(&s[2..], &server, stream_arc.clone()).exec().await,
         b"psync" => {
             log::debug!("pysync is {:?}", &s[2..]);
 
@@ -416,5 +421,19 @@ pub async fn from_cmd_to_exec(s: Vec<&[u8]>, arg_len: u8, server: &Server) -> Re
         }
 
         _ => bail!("cmd parse error"),
+    };
+
+    match output {
+        Ok(out) => {
+            log::debug!("output is ready to write back Vec:{:?}", &out);
+            log::debug!(
+                "output is ready to write back:{:?}",
+                String::from_utf8_lossy(&out)
+            );
+            stream_arc.lock().await.writable().await?;
+            stream_arc.lock().await.write_all(&out).await?;
+            Ok(())
+        }
+        Err(e) => bail!("{e}"),
     }
 }
