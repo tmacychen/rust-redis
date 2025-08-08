@@ -11,7 +11,11 @@ use crate::{
 use anyhow::{bail, Result};
 use log::error;
 use resp_protocol::{ArrayBuilder, BulkString, Error, RespType, SimpleString, NULL_BULK_STRING};
-use tokio::{io::AsyncWriteExt, net::TcpStream, sync::Mutex};
+use tokio::{
+    io::{AsyncWriteExt, Interest},
+    net::TcpStream,
+    sync::Mutex,
+};
 
 #[derive(Clone, Debug)]
 pub struct Ping;
@@ -433,6 +437,7 @@ pub async fn from_cmd_to_exec(
                 "output is ready to write back:{:?}",
                 String::from_utf8_lossy(&out)
             );
+            stream.flush().await?;
             Ok(())
         }
         Err(e) => bail!("{e}"),

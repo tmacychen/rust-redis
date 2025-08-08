@@ -288,18 +288,18 @@ impl Server {
 
     pub async fn handle_client(&self, stream_arc: Arc<Mutex<TcpStream>>) -> Result<()> {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
-        let mut n: usize = 0;
         loop {
-            {
+            let n = {
                 let mut stream = stream_arc.lock().await;
-                let ready = stream
-                    .ready(Interest::READABLE | Interest::WRITABLE)
-                    .await?;
+                let ready = stream.ready(Interest::READABLE).await?;
                 if !ready.is_readable() {
                     info!("[connection can't read or write! A client connection CLOSED !] !");
                     break;
                 }
-                n = stream.read(&mut buf).await?;
+                stream.read(&mut buf).await?
+            };
+            if n == 0 {
+                break;
             }
             log::debug!(
                 "[A Client connected !] read from stream bytes num is  {}\nto string is {}",
