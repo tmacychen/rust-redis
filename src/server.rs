@@ -268,34 +268,39 @@ impl Server {
         self.repl_set.lock().await.add_a_repl(a_repl);
     }
 
-    pub async fn repl_exsits(&self, a_repl: Replication) -> bool {
+    pub async fn is_repl_exsits(&self, a_repl: Replication) -> bool {
         self.repl_set.lock().await.is_exsits(a_repl)
     }
     pub async fn sync_to_repls(&self, s: &[u8]) -> Result<()> {
         let repls = self.repl_set.lock().await;
-        for r in repls.get_repls() {
-            let mut stream = r.stream.lock().await;
-            let ready = stream.ready(Interest::WRITABLE).await?;
-            if ready.is_writable() {
-                stream.write_all(s).await?;
+        if !repls.is_empty() {
+            for r in repls.get_repls() {
+                let mut stream = r.stream.lock().await;
+                let ready = stream.ready(Interest::WRITABLE).await?;
+                if ready.is_writable() {
+                    stream.write_all(s).await?;
+                }
             }
+            log::debug!("sync command to repls");
         }
         Ok(())
     }
 
     pub async fn handle_client(&self, stream_arc: Arc<Mutex<TcpStream>>) -> Result<()> {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
-        let mut stream = stream_arc.lock().await;
+        let mut n: usize = 0;
         loop {
-            let ready = stream
-                .ready(Interest::READABLE | Interest::WRITABLE)
-                .await?;
-            if ready.is_read_closed() || ready.is_write_closed() {
-                info!("[connection can't read or write! A client connection CLOSED !] !");
-                break;
+            {
+                let mut stream = stream_arc.lock().await;
+                let ready = stream
+                    .ready(Interest::READABLE | Interest::WRITABLE)
+                    .await?;
+                if !ready.is_readable() {
+                    info!("[connection can't read or write! A client connection CLOSED !] !");
+                    break;
+                }
+                n = stream.read(&mut buf).await?;
             }
-            let n = stream.read(&mut buf).await?;
-
             log::debug!(
                 "[A Client connected !] read from stream bytes num is  {}\nto string is {}",
                 n,

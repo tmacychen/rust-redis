@@ -425,13 +425,14 @@ pub async fn from_cmd_to_exec(
 
     match output {
         Ok(out) => {
+            let mut stream = stream_arc.lock().await;
+            stream.writable().await?;
             log::debug!("output is ready to write back Vec:{:?}", &out);
+            stream.write_all(&out).await?;
             log::debug!(
                 "output is ready to write back:{:?}",
                 String::from_utf8_lossy(&out)
             );
-            stream_arc.lock().await.writable().await?;
-            stream_arc.lock().await.write_all(&out).await?;
             Ok(())
         }
         Err(e) => bail!("{e}"),
