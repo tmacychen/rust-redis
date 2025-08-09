@@ -293,7 +293,7 @@ impl Server {
             let n = {
                 let mut stream = stream_arc.try_lock()?;
                 let ready = stream.ready(Interest::READABLE).await?;
-                if self.repl_set.lock().await.is_ready() && !ready.is_readable() {
+                if self.repl_set.lock().await.is_ready() || !ready.is_readable() {
                     info!("[connection can't read or write! A client connection CLOSED !] !");
                     break;
                 }
