@@ -273,16 +273,14 @@ impl Server {
     }
     pub async fn sync_to_repls(&self, s: &[u8]) -> Result<()> {
         let repls = self.repl_set.lock().await;
-        if !repls.is_empty() {
-            for r in repls.get_repls() {
-                let mut stream = r.stream.lock().await;
-                let ready = stream.ready(Interest::WRITABLE).await?;
-                if ready.is_writable() {
-                    stream.write_all(s).await?;
-                }
+        for r in repls.get_repls() {
+            let mut stream = r.stream.lock().await;
+            let ready = stream.ready(Interest::WRITABLE).await?;
+            if ready.is_writable() {
+                stream.write_all(s).await?;
             }
-            log::debug!("sync command to repls");
         }
+        log::debug!("sync command to repls");
         Ok(())
     }
 
@@ -307,12 +305,14 @@ impl Server {
                 String::from_utf8_lossy(&buf[0..n]).to_string()
             );
 
-            let server_clone = self.clone();
-            tokio::spawn(async move {
-                if let Err(e) = server_clone.sync_to_repls(buf.clone().as_slice()).await {
-                    error!("sync to repls error{}", e);
-                }
-            });
+            if self.has_repls().await {
+                let server_clone = self.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = server_clone.sync_to_repls(buf.clone().as_slice()).await {
+                        error!("sync to repls error{}", e);
+                    }
+                });
+            }
 
             let read_array: Array = Array::parse(&buf, &mut 0, &n).expect("bulkString parse error");
             log::debug!("read from stream is {:?}", read_array);
@@ -344,5 +344,9 @@ impl Server {
     }
     pub fn is_slave(&self) -> bool {
         !self.option.is_master
+    }
+    pub async fn has_repls(&self) -> bool {
+        let repl_set_lock = self.repl_set.lock().await;
+        repl_set_lock.is_empty()
     }
 }

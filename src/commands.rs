@@ -135,7 +135,7 @@ impl<'a> Keys<'a> {
                 }
                 Ok(ret_array.build().bytes().to_vec())
             } else {
-                Ok(BulkString::new(b"-1").bytes().to_vec())
+                Ok(NULL_BULK_STRING.bytes().to_vec())
             }
         }
     }
