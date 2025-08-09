@@ -306,7 +306,7 @@ impl Server {
                 String::from_utf8_lossy(&buf[0..n]).to_string()
             );
 
-            if self.is_repls_ready().await {
+            if !self.is_slave() && self.is_repls_ready().await {
                 let server_clone = self.clone();
                 tokio::spawn(async move {
                     if let Err(e) = server_clone.sync_to_repls(buf.clone().as_slice()).await {
