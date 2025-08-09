@@ -301,11 +301,6 @@ impl Server {
             if n == 0 {
                 break;
             }
-            log::debug!(
-                "[A Client connected !] read from stream bytes num is  {}\nto string is {}",
-                n,
-                String::from_utf8_lossy(&buf[0..n]).to_string()
-            );
 
             if self.is_slave() {
                 log::debug!(
@@ -314,6 +309,11 @@ impl Server {
                     String::from_utf8_lossy(&buf[0..n]).to_string()
                 );
             } else if self.is_repls_ready().await {
+                log::debug!(
+                    "[A Client connected !] read from stream bytes num is  {}\nto string is {}",
+                    n,
+                    String::from_utf8_lossy(&buf[0..n]).to_string()
+                );
                 let server_clone = self.clone();
                 tokio::spawn(async move {
                     if let Err(e) = server_clone.sync_to_repls(buf.clone().as_slice()).await {
