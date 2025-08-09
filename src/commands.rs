@@ -29,7 +29,7 @@ pub struct Set<'a>(String, KeyValue, &'a Server);
 
 pub struct Keys<'a>(&'a [&'a [u8]], Arc<Mutex<RdbFile>>);
 
-pub struct Repl<'a>(&'a [&'a [u8]], &'a Server, Arc<Mutex<TcpStream>>);
+pub struct Repl<'a>(&'a [&'a [u8]], &'a mut Server, Arc<Mutex<TcpStream>>);
 
 impl Ping {
     fn exec(&self) -> Result<Vec<u8>> {
@@ -141,11 +141,11 @@ impl<'a> Keys<'a> {
     }
 }
 impl<'a> Repl<'a> {
-    pub fn new(cmd: &'a [&[u8]], s: &'a Server, stream: Arc<Mutex<TcpStream>>) -> Self {
+    pub fn new(cmd: &'a [&[u8]], s: &'a mut Server, stream: Arc<Mutex<TcpStream>>) -> Self {
         Repl(cmd, s, stream)
     }
 
-    async fn exec(&self) -> Result<Vec<u8>> {
+    async fn exec(&mut self) -> Result<Vec<u8>> {
         log::debug!("repl conf request is {:?}", &self.0);
 
         match self.0[1].to_ascii_lowercase().as_slice() {
@@ -159,7 +159,7 @@ impl<'a> Repl<'a> {
                 Ok(SimpleString::new(b"OK").bytes().to_vec())
             }
             b"capa" => {
-                if self.1.repl_set.lock().await.is_empty() {
+                if self.1.repl_set.is_empty() {
                     Ok(NULL_BULK_STRING.bytes().to_vec())
                 } else {
                     Ok(SimpleString::new(b"OK").bytes().to_vec())
@@ -260,7 +260,7 @@ pub async fn from_cmd_to_exec(
     s: Vec<&[u8]>,
     arg_len: u8,
     stream_arc: Arc<Mutex<TcpStream>>,
-    server: &Server,
+    server: &mut Server,
 ) -> Result<()> {
     log::debug!("get s:{:?}", s);
     let output = match s[1].to_ascii_lowercase().as_slice() {
@@ -389,7 +389,7 @@ pub async fn from_cmd_to_exec(
             }
             _ => bail!("info args number error!"),
         },
-        b"replconf" => Repl::new(&s[2..], &server, stream_arc.clone()).exec().await,
+        b"replconf" => Repl::new(&s[2..], server, stream_arc.clone()).exec().await,
         b"psync" => {
             log::debug!("pysync is {:?}", &s[2..]);
 
@@ -415,7 +415,7 @@ pub async fn from_cmd_to_exec(
                         //for pop the last  two bytes "\r\n"
                         ret.pop();
                         ret.pop();
-                        server.repl_set.lock().await.set_ready(true);
+                        server.repl_set.set_ready(true);
                         Ok(ret)
                     } else {
                         Ok(SimpleString::new(b"-1").bytes().to_vec())
@@ -432,7 +432,7 @@ pub async fn from_cmd_to_exec(
         Ok(out) => {
             let mut stream = stream_arc.lock().await;
             stream.writable().await?;
-            log::debug!("output is ready to write back Vec:{:?}", &out);
+            // log::debug!("output is ready to write back Vec:{:?}", &out);
             stream.write_all(&out).await?;
             log::debug!(
                 "output is ready to write back:{:?}",

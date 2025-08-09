@@ -11,13 +11,13 @@ use std::sync::Arc;
 
 use tokio::{net::TcpStream, sync::Mutex};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Replication {
     pub stream: Arc<Mutex<TcpStream>>,
     pub port: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ReplicationSet {
     repls: Vec<Replication>,
     pub ready: bool,

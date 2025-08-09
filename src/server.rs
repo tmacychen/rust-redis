@@ -66,7 +66,7 @@ impl ServerOpt {
 pub struct Server {
     pub storage: Arc<Mutex<RdbFile>>,
     pub option: ServerOpt,
-    pub repl_set: Arc<Mutex<ReplicationSet>>,
+    pub repl_set: ReplicationSet,
     info: Arc<Mutex<DashMap<String, DashMap<String, String>>>>,
 }
 
@@ -114,7 +114,7 @@ impl Server {
         server = Server {
             storage: storage,
             option: conf,
-            repl_set: Arc::new(Mutex::new(ReplicationSet::new())),
+            repl_set: ReplicationSet::new(),
             info: Arc::new(Mutex::new(ser_info)),
         };
 
@@ -142,7 +142,7 @@ impl Server {
 
             let stream_arc = Arc::new(Mutex::new(stream));
             loop {
-                let server_clone = self.clone();
+                let mut server_clone = self.clone();
                 let stream_clone = stream_arc.clone();
                 tokio::spawn(async move {
                     if let Err(e) = server_clone.handle_client(stream_clone).await {
@@ -155,7 +155,7 @@ impl Server {
                 let stream = listener.accept().await;
                 match stream {
                     Ok((stream, _)) => {
-                        let server_clone = self.clone();
+                        let mut server_clone = self.clone();
                         let stream_arc = Arc::new(Mutex::new(stream));
                         tokio::spawn(async move {
                             if let Err(e) = server_clone.handle_client(stream_arc.clone()).await {
@@ -264,20 +264,21 @@ impl Server {
         Ok(())
     }
 
-    pub async fn insert_a_repl(&self, a_repl: Replication) {
-        self.repl_set.lock().await.add_a_repl(a_repl);
+    pub async fn insert_a_repl(&mut self, a_repl: Replication) {
+        self.repl_set.add_a_repl(a_repl);
     }
 
-    pub async fn is_repl_exsits(&self, a_repl: Replication) -> bool {
-        self.repl_set.lock().await.is_exsits(a_repl)
+    pub async fn is_repl_exsits(&mut self, a_repl: Replication) -> bool {
+        self.repl_set.is_exsits(a_repl)
     }
     pub async fn sync_to_repls(&self, s: &[u8]) -> Result<()> {
-        let repls = self.repl_set.lock().await;
-        for r in repls.get_repls() {
+        log::debug!("[master] get repls lock");
+        for r in self.repl_set.get_repls() {
             let mut stream = r.stream.lock().await;
+            log::debug!("[master] get stream lock");
             let ready = stream.ready(Interest::WRITABLE).await?;
             if ready.is_writable() {
-                log::debug!("sync command to a repls {:?}", s);
+                log::debug!("[master] sync command to a repls {:?}", s);
                 stream.write_all(s).await?;
                 stream.flush().await?;
             }
@@ -286,7 +287,7 @@ impl Server {
         Ok(())
     }
 
-    pub async fn handle_client(&self, stream_arc: Arc<Mutex<TcpStream>>) -> Result<()> {
+    pub async fn handle_client(&mut self, stream_arc: Arc<Mutex<TcpStream>>) -> Result<()> {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
         loop {
             let n = {
@@ -308,25 +309,26 @@ impl Server {
                     n,
                     String::from_utf8_lossy(&buf[0..n]).to_string()
                 );
-            } else if self.is_repls_ready().await {
-                log::debug!(
-                    "[A Client connected !] read from stream bytes num is  {}\nto string is {}",
-                    n,
-                    String::from_utf8_lossy(&buf[0..n]).to_string()
-                );
+            } else if self.is_repls_ready() {
                 let server_clone = self.clone();
+                log::debug!("get repls ready!!");
                 tokio::spawn(async move {
                     if let Err(e) = server_clone.sync_to_repls(buf.clone().as_slice()).await {
                         error!("sync to repls error{}", e);
                     }
                 });
+                log::debug!(
+                    "[A Client connected !] read from stream bytes num is  {}\nto string is {}",
+                    n,
+                    String::from_utf8_lossy(&buf[0..n]).to_string()
+                );
             }
 
             let read_array: Array = Array::parse(&buf, &mut 0, &n).expect("bulkString parse error");
-            log::debug!("read from stream is {:?}", read_array);
+            // log::debug!("read from stream is {:?}", read_array);
 
             let r = read_array.to_vec();
-            log::debug!("read from stream is {:?}", &r);
+            // log::debug!("read from stream is {:?}", &r);
             let read_slice: Vec<&[u8]> = r
                 .split(|c| *c == b'\r' || *c == b'\n')
                 .filter(|s| !s.is_empty())
@@ -353,8 +355,7 @@ impl Server {
     pub fn is_slave(&self) -> bool {
         !self.option.is_master
     }
-    pub async fn is_repls_ready(&self) -> bool {
-        let repl_set_lock = self.repl_set.lock().await;
-        !repl_set_lock.is_empty() && repl_set_lock.is_ready()
+    pub fn is_repls_ready(&self) -> bool {
+        !self.repl_set.is_empty() && self.repl_set.is_ready()
     }
 }
