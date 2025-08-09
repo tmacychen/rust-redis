@@ -140,8 +140,6 @@ impl Server {
                 .expect("repl conf failed!");
             self.psync(&mut stream).await.expect("psync failed!");
 
-            self.repl_set.lock().await.set_ready(true);
-
             let stream_arc = Arc::new(Mutex::new(stream));
             loop {
                 let server_clone = self.clone();
@@ -280,6 +278,7 @@ impl Server {
             let ready = stream.ready(Interest::WRITABLE).await?;
             if ready.is_writable() {
                 stream.write_all(s).await?;
+                stream.flush().await?;
             }
         }
         log::debug!("sync command to repls");
