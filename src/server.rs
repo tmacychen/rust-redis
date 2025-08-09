@@ -272,7 +272,7 @@ impl Server {
         self.repl_set.is_exsits(a_repl)
     }
     pub async fn sync_to_repls(&self, s: &[u8]) -> Result<()> {
-        log::debug!("[master] get repls lock");
+        log::debug!("[master] sync to repls ");
         for r in self.repl_set.get_repls() {
             let mut stream = r.stream.lock().await;
             log::debug!("[master] get stream lock");
@@ -309,7 +309,8 @@ impl Server {
                     n,
                     String::from_utf8_lossy(&buf[0..n]).to_string()
                 );
-            } else if self.is_repls_ready() {
+            }
+            if self.is_mater() && self.repl_set.is_ready() {
                 let server_clone = self.clone();
                 log::debug!("get repls ready!!");
                 tokio::spawn(async move {
@@ -355,7 +356,7 @@ impl Server {
     pub fn is_slave(&self) -> bool {
         !self.option.is_master
     }
-    pub fn is_repls_ready(&self) -> bool {
-        !self.repl_set.is_empty() && self.repl_set.is_ready()
+    pub fn is_mater(&self) -> bool {
+        self.option.is_master
     }
 }

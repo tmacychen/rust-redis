@@ -416,6 +416,7 @@ pub async fn from_cmd_to_exec(
                         ret.pop();
                         ret.pop();
                         server.repl_set.set_ready(true);
+                        log::debug!("repl set get repl and ready!{}", server.repl_set.is_ready());
                         Ok(ret)
                     } else {
                         Ok(SimpleString::new(b"-1").bytes().to_vec())
