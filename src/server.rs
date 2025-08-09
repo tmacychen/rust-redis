@@ -140,6 +140,8 @@ impl Server {
                 .expect("repl conf failed!");
             self.psync(&mut stream).await.expect("psync failed!");
 
+            self.repl_set.lock().await.set_ready(true);
+
             let stream_arc = Arc::new(Mutex::new(stream));
             loop {
                 let server_clone = self.clone();
@@ -305,7 +307,7 @@ impl Server {
                 String::from_utf8_lossy(&buf[0..n]).to_string()
             );
 
-            if self.has_repls().await {
+            if self.is_repls_ready().await {
                 let server_clone = self.clone();
                 tokio::spawn(async move {
                     if let Err(e) = server_clone.sync_to_repls(buf.clone().as_slice()).await {
@@ -345,8 +347,8 @@ impl Server {
     pub fn is_slave(&self) -> bool {
         !self.option.is_master
     }
-    pub async fn has_repls(&self) -> bool {
+    pub async fn is_repls_ready(&self) -> bool {
         let repl_set_lock = self.repl_set.lock().await;
-        repl_set_lock.is_empty()
+        !repl_set_lock.is_empty() && repl_set_lock.is_ready()
     }
 }

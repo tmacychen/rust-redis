@@ -20,10 +20,14 @@ pub struct Replication {
 #[derive(Debug)]
 pub struct ReplicationSet {
     repls: Vec<Replication>,
+    pub ready: bool,
 }
 impl ReplicationSet {
     pub fn new() -> Self {
-        ReplicationSet { repls: Vec::new() }
+        ReplicationSet {
+            repls: Vec::new(),
+            ready: false,
+        }
     }
     pub fn add_a_repl(&mut self, a_repl: Replication) {
         self.repls.push(a_repl);
@@ -37,5 +41,11 @@ impl ReplicationSet {
     }
     pub fn get_repls(&self) -> &[Replication] {
         self.repls.as_slice()
+    }
+    pub fn is_ready(&self) -> bool {
+        self.ready
+    }
+    pub fn set_ready(&mut self, flag: bool) {
+        self.ready = flag;
     }
 }
