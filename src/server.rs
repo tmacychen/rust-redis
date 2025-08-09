@@ -277,6 +277,7 @@ impl Server {
             let mut stream = r.stream.lock().await;
             let ready = stream.ready(Interest::WRITABLE).await?;
             if ready.is_writable() {
+                log::debug!("sync command to a repls {:?}", s);
                 stream.write_all(s).await?;
                 stream.flush().await?;
             }
@@ -306,7 +307,13 @@ impl Server {
                 String::from_utf8_lossy(&buf[0..n]).to_string()
             );
 
-            if !self.is_slave() && self.is_repls_ready().await {
+            if self.is_slave() {
+                log::debug!(
+                    "[master connected !] read from stream bytes num is  {}\nto string is {}",
+                    n,
+                    String::from_utf8_lossy(&buf[0..n]).to_string()
+                );
+            } else if self.is_repls_ready().await {
                 let server_clone = self.clone();
                 tokio::spawn(async move {
                     if let Err(e) = server_clone.sync_to_repls(buf.clone().as_slice()).await {
@@ -324,7 +331,7 @@ impl Server {
                 .split(|c| *c == b'\r' || *c == b'\n')
                 .filter(|s| !s.is_empty())
                 .collect();
-            // log::debug!("read from stream is {:?}", read_slice);
+
             log::debug!("read from stream  slice is {:?}", read_slice);
 
             let (f, l) = read_slice.split_first().expect("parse command error !");
