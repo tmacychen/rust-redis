@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, net::Shutdown, path::PathBuf, sync::Arc};
 
 use crate::{
     db::{Dbconf, RdbFile, RdbParser, RDB_VERSION},
@@ -291,9 +291,9 @@ impl Server {
         let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
         loop {
             let n = {
-                let mut stream = stream_arc.lock().await;
+                let mut stream = stream_arc.try_lock()?;
                 let ready = stream.ready(Interest::READABLE).await?;
-                if !ready.is_readable() {
+                if self.repl_set.lock().await.is_ready() && !ready.is_readable() {
                     info!("[connection can't read or write! A client connection CLOSED !] !");
                     break;
                 }
