@@ -66,7 +66,7 @@ impl ServerOpt {
 pub struct Server {
     pub storage: Arc<Mutex<RdbFile>>,
     pub option: ServerOpt,
-    pub repl_set: ReplicationSet,
+    pub repl_set: Arc<Mutex<ReplicationSet>>,
     info: Arc<Mutex<DashMap<String, DashMap<String, String>>>>,
 }
 
@@ -114,7 +114,7 @@ impl Server {
         server = Server {
             storage: storage,
             option: conf,
-            repl_set: ReplicationSet::new(),
+            repl_set: Arc::new(Mutex::new(ReplicationSet::new())),
             info: Arc::new(Mutex::new(ser_info)),
         };
 
@@ -265,15 +265,15 @@ impl Server {
     }
 
     pub async fn insert_a_repl(&mut self, a_repl: Replication) {
-        self.repl_set.add_a_repl(a_repl);
+        self.repl_set.lock().await.add_a_repl(a_repl);
     }
 
     pub async fn is_repl_exsits(&mut self, a_repl: Replication) -> bool {
-        self.repl_set.is_exsits(a_repl)
+        self.repl_set.lock().await.is_exsits(a_repl)
     }
     pub async fn sync_to_repls(&self, s: &[u8]) -> Result<()> {
         log::debug!("[master] sync to repls ");
-        for r in self.repl_set.get_repls() {
+        for r in self.repl_set.lock().await.get_repls() {
             let mut stream = r.stream.lock().await;
             log::debug!("[master] get stream lock");
             let ready = stream.ready(Interest::WRITABLE).await?;
@@ -310,7 +310,7 @@ impl Server {
                     String::from_utf8_lossy(&buf[0..n]).to_string()
                 );
             }
-            if self.is_mater() && self.repl_set.is_ready() {
+            if self.is_mater() && self.repl_set.lock().await.is_ready() {
                 let server_clone = self.clone();
                 log::debug!("get repls ready!!");
                 tokio::spawn(async move {

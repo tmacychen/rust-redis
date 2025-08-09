@@ -159,7 +159,7 @@ impl<'a> Repl<'a> {
                 Ok(SimpleString::new(b"OK").bytes().to_vec())
             }
             b"capa" => {
-                if self.1.repl_set.is_empty() {
+                if self.1.repl_set.lock().await.is_empty() {
                     Ok(NULL_BULK_STRING.bytes().to_vec())
                 } else {
                     Ok(SimpleString::new(b"OK").bytes().to_vec())
@@ -415,8 +415,7 @@ pub async fn from_cmd_to_exec(
                         //for pop the last  two bytes "\r\n"
                         ret.pop();
                         ret.pop();
-                        server.repl_set.set_ready(true);
-                        log::debug!("repl set get repl and ready!{}", server.repl_set.is_ready());
+                        server.repl_set.lock().await.set_ready(true);
                         Ok(ret)
                     } else {
                         Ok(SimpleString::new(b"-1").bytes().to_vec())
