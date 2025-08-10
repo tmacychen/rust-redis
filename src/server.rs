@@ -1,4 +1,4 @@
-use std::{fs, net::Shutdown, path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf, sync::Arc};
 
 use crate::{
     db::{Dbconf, RdbFile, RdbParser, RDB_VERSION},
@@ -15,6 +15,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, Interest},
     net::{TcpListener, TcpStream},
     sync::Mutex,
+    sync::RwLock,
 };
 
 use crate::commands;
@@ -140,16 +141,46 @@ impl Server {
                 .expect("repl conf failed!");
             self.psync(&mut stream).await.expect("psync failed!");
 
-            let stream_arc = Arc::new(Mutex::new(stream));
+            let stream_arc = Arc::new(RwLock::new(stream));
+
+            let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE];
             loop {
-                let mut server_clone = self.clone();
-                let stream_clone = stream_arc.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = server_clone.handle_client(stream_clone).await {
-                        error!("handle client error :{}", e);
+                let n = {
+                    let guard = stream_arc.read().await;
+                    if guard.readable().await.is_ok() {
+                        guard.try_read(&mut buf)?
+                    } else {
+                        0
                     }
-                });
+                };
+
+                if n == 0 {
+                    break;
+                }
+                let read_array: Array =
+                    Array::parse(&buf, &mut 0, &n).expect("bulkString parse error");
+                // log::debug!("read from stream is {:?}", read_array);
+
+                let r = read_array.to_vec();
+                // log::debug!("read from stream is {:?}", &r);
+                let read_slice: Vec<&[u8]> = r
+                    .split(|c| *c == b'\r' || *c == b'\n')
+                    .filter(|s| !s.is_empty())
+                    .collect();
+
+                log::debug!("read from stream  slice is {:?}", read_slice);
+
+                let (f, l) = read_slice.split_first().expect("parse command error !");
+
+                let arg_len: u8 = String::from_utf8_lossy(&f[1..])
+                    .parse()
+                    .expect("parse arg_len error");
+
+                log::debug!("arg len:is {}", arg_len);
+
+                commands::from_cmd_to_exec(l.to_vec(), arg_len, stream_arc.clone(), self).await?;
             }
+            Ok(())
         } else {
             loop {
                 let stream = listener.accept().await;
@@ -293,7 +324,7 @@ impl Server {
             let n = {
                 let mut stream = stream_arc.try_lock()?;
                 let ready = stream.ready(Interest::READABLE).await?;
-                if self.repl_set.lock().await.is_ready() || !ready.is_readable() {
+                if !ready.is_readable() {
                     info!("[connection can't read or write! A client connection CLOSED !] !");
                     break;
                 }
@@ -301,28 +332,6 @@ impl Server {
             };
             if n == 0 {
                 break;
-            }
-
-            if self.is_slave() {
-                log::debug!(
-                    "[master connected !] read from stream bytes num is  {}\nto string is {}",
-                    n,
-                    String::from_utf8_lossy(&buf[0..n]).to_string()
-                );
-            }
-            if self.is_mater() && self.repl_set.lock().await.is_ready() {
-                let server_clone = self.clone();
-                log::debug!("get repls ready!!");
-                tokio::spawn(async move {
-                    if let Err(e) = server_clone.sync_to_repls(buf.clone().as_slice()).await {
-                        error!("sync to repls error{}", e);
-                    }
-                });
-                log::debug!(
-                    "[A Client connected !] read from stream bytes num is  {}\nto string is {}",
-                    n,
-                    String::from_utf8_lossy(&buf[0..n]).to_string()
-                );
             }
 
             let read_array: Array = Array::parse(&buf, &mut 0, &n).expect("bulkString parse error");
@@ -339,18 +348,30 @@ impl Server {
 
             let (f, l) = read_slice.split_first().expect("parse command error !");
 
-            if f[0] != b'*' {
-                bail!("fail to parse first command for  * ")
-            }
-
             let arg_len: u8 = String::from_utf8_lossy(&f[1..])
                 .parse()
                 .expect("parse arg_len error");
 
             log::debug!("arg len:is {}", arg_len);
 
-            commands::from_cmd_to_exec(l.to_vec(), arg_len, stream_arc.clone(), self).await?;
+            let output =
+                commands::from_cmd_to_exec(l.to_vec(), arg_len, stream_arc.clone(), self).await;
+            match output {
+                Ok(out) => {
+                    let mut stream = stream_arc.lock().await;
+                    stream.writable().await?;
+                    // log::debug!("output is ready to write back Vec:{:?}", &out);
+                    stream.write_all(&out).await?;
+                    log::debug!(
+                        "output is ready to write back:{:?}",
+                        String::from_utf8_lossy(&out)
+                    );
+                    stream.flush().await?;
+                }
+                Err(e) => bail!("{e}"),
+            }
         }
+
         Ok(())
     }
     pub fn is_slave(&self) -> bool {

@@ -261,7 +261,7 @@ pub async fn from_cmd_to_exec(
     arg_len: u8,
     stream_arc: Arc<Mutex<TcpStream>>,
     server: &mut Server,
-) -> Result<()> {
+) -> Result<Vec<u8>> {
     log::debug!("get s:{:?}", s);
     let output = match s[1].to_ascii_lowercase().as_slice() {
         b"ping" => crate::commands::Ping.exec(),
@@ -428,19 +428,5 @@ pub async fn from_cmd_to_exec(
         _ => bail!("cmd parse error"),
     };
 
-    match output {
-        Ok(out) => {
-            let mut stream = stream_arc.lock().await;
-            stream.writable().await?;
-            // log::debug!("output is ready to write back Vec:{:?}", &out);
-            stream.write_all(&out).await?;
-            log::debug!(
-                "output is ready to write back:{:?}",
-                String::from_utf8_lossy(&out)
-            );
-            stream.flush().await?;
-            Ok(())
-        }
-        Err(e) => bail!("{e}"),
-    }
+    output
 }
